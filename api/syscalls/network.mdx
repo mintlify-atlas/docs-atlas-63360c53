@@ -1,0 +1,551 @@
+---
+title: "Network Operations"
+description: "System calls for socket operations and network communication"
+---
+
+## Socket Creation
+
+### sys_socket
+
+Create an endpoint for communication.
+
+```c
+int_t sys_socket(dword_t domain, dword_t type, dword_t protocol)
+```
+
+<ParamField path="domain" type="dword_t">
+  Communication domain:
+  - `PF_LOCAL` / `AF_LOCAL` (1): Local/Unix domain sockets
+  - `PF_INET` / `AF_INET` (2): IPv4 Internet protocols
+  - `PF_INET6` / `AF_INET6` (10): IPv6 Internet protocols
+</ParamField>
+
+<ParamField path="type" type="dword_t">
+  Socket type:
+  - `SOCK_STREAM` (1): Stream socket (TCP)
+  - `SOCK_DGRAM` (2): Datagram socket (UDP)
+  - `SOCK_RAW` (3): Raw socket
+  - `SOCK_NONBLOCK` (0x800): Non-blocking flag (can be OR'd)
+  - `SOCK_CLOEXEC` (0x80000): Close-on-exec flag (can be OR'd)
+</ParamField>
+
+<ParamField path="protocol" type="dword_t">
+  Protocol to use:
+  - `0`: Default protocol for type
+  - `IPPROTO_TCP`: TCP protocol
+  - `IPPROTO_UDP`: UDP protocol
+  - `IPPROTO_ICMP`: ICMP protocol
+  - `IPPROTO_RAW`: Raw IP packets
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns new socket file descriptor on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EINVAL` (-22): Invalid domain, type, or protocol
+- `EMFILE` (-24): Too many open files
+- `ENOMEM` (-12): Insufficient memory
+- `EAFNOSUPPORT` (-97): Address family not supported
+- `EPROTONOSUPPORT` (-93): Protocol not supported
+
+**Source:** fs/sock.h:14, fs/sock.c:38
+
+---
+
+### sys_socketpair
+
+Create a pair of connected sockets.
+
+```c
+int_t sys_socketpair(dword_t domain, dword_t type, dword_t protocol, addr_t sockets_addr)
+```
+
+<ParamField path="domain" type="dword_t">
+  Communication domain (typically AF_LOCAL).
+</ParamField>
+
+<ParamField path="type" type="dword_t">
+  Socket type (same as sys_socket).
+</ParamField>
+
+<ParamField path="protocol" type="dword_t">
+  Protocol (usually 0).
+</ParamField>
+
+<ParamField path="sockets_addr" type="addr_t">
+  Address to store pair of socket file descriptors.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Creates two connected sockets. Data written to one can be read from the other.
+
+**Source:** fs/sock.h:22, fs/sock.c:557
+
+---
+
+## Socket Connection
+
+### sys_bind
+
+Bind a socket to an address.
+
+```c
+int_t sys_bind(fd_t sock_fd, addr_t sockaddr_addr, uint_t sockaddr_len)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address of sockaddr structure containing bind address.
+</ParamField>
+
+<ParamField path="sockaddr_len" type="uint_t">
+  Length of sockaddr structure.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `EINVAL` (-22): Socket already bound or invalid address
+- `EADDRINUSE` (-98): Address already in use
+- `EACCES` (-13): Permission denied
+- `EFAULT` (-14): Bad address pointer
+
+**Description:**
+Assigns a local address to a socket. Required before accepting connections or receiving data on some socket types.
+
+**Source:** fs/sock.h:15, fs/sock.c:329
+
+---
+
+### sys_connect
+
+Initiate a connection on a socket.
+
+```c
+int_t sys_connect(fd_t sock_fd, addr_t sockaddr_addr, uint_t sockaddr_len)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address of sockaddr structure containing peer address.
+</ParamField>
+
+<ParamField path="sockaddr_len" type="uint_t">
+  Length of sockaddr structure.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `ECONNREFUSED` (-111): Connection refused
+- `ETIMEDOUT` (-110): Connection timed out
+- `ENETUNREACH` (-101): Network unreachable
+- `EINPROGRESS` (-115): Non-blocking socket, connection in progress
+- `EISCONN` (-106): Socket already connected
+
+**Source:** fs/sock.h:16, fs/sock.c:357
+
+---
+
+### sys_listen
+
+Listen for connections on a socket.
+
+```c
+int_t sys_listen(fd_t sock_fd, int_t backlog)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="backlog" type="int_t">
+  Maximum length of pending connection queue.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `EOPNOTSUPP` (-95): Socket doesn't support listen
+
+**Description:**
+Marks socket as passive, ready to accept incoming connections.
+
+**Source:** fs/sock.h:17, fs/sock.c:388
+
+---
+
+### sys_accept / sys_accept4
+
+Accept a connection on a socket.
+
+```c
+int_t sys_accept(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr)
+int_t sys_accept4(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr, int_t flags)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Listening socket file descriptor.
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address to store peer address. Can be 0 to ignore.
+</ParamField>
+
+<ParamField path="sockaddr_len_addr" type="addr_t">
+  Address of length variable (input: buffer size, output: actual size).
+</ParamField>
+
+<ParamField path="flags" type="int_t">
+  (accept4 only) Flags:
+  - `SOCK_NONBLOCK` (0x800): Set O_NONBLOCK on new socket
+  - `SOCK_CLOEXEC` (0x80000): Set close-on-exec on new socket
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns new connected socket descriptor on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `EINVAL` (-22): Socket not listening
+- `EINTR` (-4): Interrupted by signal
+- `EAGAIN` (-11): No pending connections (non-blocking socket)
+
+**Source:** fs/sock.h:18-19, fs/sock.c:400
+
+---
+
+## Data Transfer
+
+### sys_sendto
+
+Send a message on a socket.
+
+```c
+int_t sys_sendto(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+                 addr_t sockaddr_addr, dword_t sockaddr_len)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="buffer_addr" type="addr_t">
+  Address of data buffer to send.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Number of bytes to send.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Send flags:
+  - `MSG_OOB` (0x1): Out-of-band data
+  - `MSG_DONTWAIT` (0x40): Non-blocking operation
+  - `MSG_EOR` (0x80): End of record
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Destination address (for unconnected sockets). Can be 0 for connected sockets.
+</ParamField>
+
+<ParamField path="sockaddr_len" type="dword_t">
+  Length of destination address.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns number of bytes sent on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `ENOTCONN` (-107): Socket not connected (and no address provided)
+- `EMSGSIZE` (-90): Message too large
+- `ENOBUFS` (-105): No buffer space available
+- `EPIPE` (-32): Connection broken
+
+**Source:** fs/sock.h:23, fs/sock.c:606
+
+---
+
+### sys_recvfrom
+
+Receive a message from a socket.
+
+```c
+int_t sys_recvfrom(fd_t sock_fd, addr_t buffer_addr, dword_t len, dword_t flags,
+                   addr_t sockaddr_addr, addr_t sockaddr_len_addr)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="buffer_addr" type="addr_t">
+  Address of buffer to receive data.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Size of receive buffer.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Receive flags:
+  - `MSG_PEEK` (0x2): Peek at data without removing from queue
+  - `MSG_WAITALL` (0x100): Wait for full request or error
+  - `MSG_DONTWAIT` (0x40): Non-blocking operation
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address to store sender address. Can be 0 to ignore.
+</ParamField>
+
+<ParamField path="sockaddr_len_addr" type="addr_t">
+  Address of length variable for sender address.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns number of bytes received on success, 0 on orderly shutdown, or negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid socket descriptor
+- `ENOTCONN` (-107): Socket not connected
+- `EAGAIN` (-11): No data available (non-blocking)
+- `EINTR` (-4): Interrupted by signal
+
+**Source:** fs/sock.h:24, fs/sock.c:638
+
+---
+
+### sys_sendmsg / sys_recvmsg
+
+Send/receive message with ancillary data.
+
+```c
+int_t sys_sendmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags)
+int_t sys_recvmsg(fd_t sock_fd, addr_t msghdr_addr, int_t flags)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="msghdr_addr" type="addr_t">
+  Address of msghdr structure containing:
+  - `msg_name`: Destination/source address
+  - `msg_iov`: Scatter/gather array
+  - `msg_control`: Ancillary data (e.g., file descriptors via SCM_RIGHTS)
+</ParamField>
+
+<ParamField path="flags" type="int_t">
+  Message flags (same as sendto/recvfrom).
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns bytes sent/received on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Advanced message operations supporting scatter/gather I/O and ancillary data like file descriptor passing over Unix domain sockets.
+
+**Source:** fs/sock.h:28-29, fs/sock.c:859
+
+---
+
+### sys_shutdown
+
+Shut down socket send and/or receive operations.
+
+```c
+int_t sys_shutdown(fd_t sock_fd, dword_t how)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="how" type="dword_t">
+  Shutdown mode:
+  - `SHUT_RD` (0): Disallow further receives
+  - `SHUT_WR` (1): Disallow further sends
+  - `SHUT_RDWR` (2): Disallow both sends and receives
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Partially or fully closes a socket connection without deallocating the socket descriptor.
+
+**Source:** fs/sock.h:25, fs/sock.c:685
+
+---
+
+## Socket Options
+
+### sys_setsockopt
+
+Set socket options.
+
+```c
+int_t sys_setsockopt(fd_t sock_fd, dword_t level, dword_t option,
+                     addr_t value_addr, dword_t value_len)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="level" type="dword_t">
+  Protocol level:
+  - `SOL_SOCKET` (1): Socket level
+  - `IPPROTO_TCP` (6): TCP level
+  - `IPPROTO_IP` (0): IP level
+  - `IPPROTO_IPV6` (41): IPv6 level
+</ParamField>
+
+<ParamField path="option" type="dword_t">
+  Option name:
+  - Socket level: SO_REUSEADDR, SO_KEEPALIVE, SO_SNDBUF, SO_RCVBUF, SO_LINGER
+  - TCP level: TCP_NODELAY, TCP_DEFER_ACCEPT
+  - IP level: IP_TOS, IP_TTL
+</ParamField>
+
+<ParamField path="value_addr" type="addr_t">
+  Address of option value.
+</ParamField>
+
+<ParamField path="value_len" type="dword_t">
+  Length of option value.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** fs/sock.h:26, fs/sock.c:698
+
+---
+
+### sys_getsockopt
+
+Get socket options.
+
+```c
+int_t sys_getsockopt(fd_t sock_fd, dword_t level, dword_t option,
+                     addr_t value_addr, addr_t len_addr)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="level" type="dword_t">
+  Protocol level (same as setsockopt).
+</ParamField>
+
+<ParamField path="option" type="dword_t">
+  Option name:
+  - SO_TYPE, SO_ERROR, SO_DOMAIN, SO_PROTOCOL, SO_PEERCRED
+</ParamField>
+
+<ParamField path="value_addr" type="addr_t">
+  Address to store option value.
+</ParamField>
+
+<ParamField path="len_addr" type="addr_t">
+  Address of length variable (input: buffer size, output: actual size).
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** fs/sock.h:27, fs/sock.c:740
+
+---
+
+## Socket Information
+
+### sys_getsockname
+
+Get local socket address.
+
+```c
+int_t sys_getsockname(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address to store local socket address.
+</ParamField>
+
+<ParamField path="sockaddr_len_addr" type="addr_t">
+  Address of length variable.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Retrieves the local address to which the socket is bound.
+
+**Source:** fs/sock.h:20, fs/sock.c:500
+
+---
+
+### sys_getpeername
+
+Get peer socket address.
+
+```c
+int_t sys_getpeername(fd_t sock_fd, addr_t sockaddr_addr, addr_t sockaddr_len_addr)
+```
+
+<ParamField path="sock_fd" type="fd_t">
+  Socket file descriptor.
+</ParamField>
+
+<ParamField path="sockaddr_addr" type="addr_t">
+  Address to store peer socket address.
+</ParamField>
+
+<ParamField path="sockaddr_len_addr" type="addr_t">
+  Address of length variable.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Retrieves the address of the peer connected to the socket.
+
+**Source:** fs/sock.h:21, fs/sock.c:532

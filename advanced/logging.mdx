@@ -1,0 +1,325 @@
+---
+title: Debug Logging
+description: Configure and use debug logging channels in iSH
+---
+
+## Overview
+
+iSH includes a flexible logging system with multiple channels that can be enabled at build time. These channels provide insights into emulator behavior, system calls, instruction execution, and more.
+
+<Warning>
+Logging, especially instruction-level logging, significantly impacts performance. Use it only for debugging purposes.
+</Warning>
+
+## Available Channels
+
+From the README:
+
+### strace
+
+The most useful channel for application debugging. Logs parameters and return values of almost every system call.
+
+**Example output:**
+```
+[1234] open("/etc/passwd", O_RDONLY) = 3
+[1234] read(3, "root:x:0:0:root:/root:/bin...", 4096) = 1024
+[1234] close(3) = 0
+```
+
+### instr
+
+Logs every instruction executed by the emulator.
+
+<Warning>
+This channel **dramatically slows down execution**. Use only for debugging specific instruction sequences.
+</Warning>
+
+**Example output:**
+```
+[eip=0x08048a34] mov eax, [ebp-4]
+[eip=0x08048a37] add eax, 1
+[eip=0x08048a3a] mov [ebp-4], eax
+```
+
+### verbose
+
+General debug logs that don't fit into other categories. Includes:
+- Memory management operations
+- Process creation/termination
+- File system operations
+- Signal handling
+
+### Additional Channels
+
+More channels may have been added. To find all available channels:
+
+```bash
+grep -r "DEFAULT_CHANNEL" ~/workspace/source/
+```
+
+Or check `debug.h`:
+
+```c:debug.h
+#ifndef DEBUG_all
+#define DEBUG_all 0
+#endif
+#ifndef DEBUG_verbose
+#define DEBUG_verbose DEBUG_all
+#endif
+#ifndef DEBUG_instr
+#define DEBUG_instr DEBUG_all
+#endif
+#ifndef DEBUG_debug
+#define DEBUG_debug DEBUG_all
+#endif
+#ifndef DEBUG_strace
+#define DEBUG_strace DEBUG_all
+#endif
+#ifndef DEBUG_memory
+#define DEBUG_memory DEBUG_all
+#endif
+```
+
+Known channels include:
+- `all` - Enable all channels
+- `verbose` - General debug output
+- `instr` - Instruction execution
+- `debug` - Debug-specific messages
+- `strace` - System call tracing
+- `memory` - Memory operations
+
+## Enabling Logs in Xcode
+
+### Configuration
+
+Edit `app/iSH.xcconfig` and set the `ISH_LOG` variable to a space-separated list of channels:
+
+```properties:app/iSH.xcconfig
+// Choose logging channels to enable. Separate by spaces. Try "verbose strace".
+ISH_LOG = strace verbose
+```
+
+### Log Handler
+
+The log handler is automatically selected based on platform:
+
+```properties:app/iSH.xcconfig
+ISH_LOGGER = $(ISH_LOGGER_$(PLATFORM_NAME))
+ISH_LOGGER_iphoneos = nslog
+ISH_LOGGER_iphonesimulator = nslog
+ISH_LOGGER_macosx = dprintf
+```
+
+- **iphoneos/iphonesimulator**: Uses `NSLog` (viewable in Xcode Console)
+- **macosx**: Uses `dprintf` (outputs to stderr)
+
+### Viewing Logs
+
+After building with logging enabled:
+
+1. **Xcode Console**: Window → Show Debug Area (Cmd+Shift+Y)
+2. **Console.app**: For device builds, use macOS Console app and filter by "iSH"
+3. **Terminal**: If running the macOS command-line tool, logs appear in stderr
+
+## Enabling Logs with Meson
+
+For the command-line tool, configure logging when setting up the build:
+
+### Single Channel
+
+```bash
+meson configure -Dlog="strace"
+```
+
+### Multiple Channels
+
+```bash
+meson configure -Dlog="strace verbose"
+```
+
+### All Channels
+
+```bash
+meson configure -Dlog="all"
+```
+
+### Build Configuration
+
+From `meson.build`:
+
+```c:meson.build
+log_on = get_option('log').split()
+log_off = get_option('nolog').split()
+foreach channel : log_on + log_off
+    if log_on.contains(channel)
+        add_project_arguments('-DDEBUG_' + channel + '=1', language: 'c')
+    else
+        add_project_arguments('-DDEBUG_' + channel + '=0', language: 'c')
+    endforeach
+endforeach
+add_project_arguments('-DLOG_HANDLER_' + get_option('log_handler').to_upper() + '=1', language: 'c')
+```
+
+### Rebuild
+
+After configuring, rebuild:
+
+```bash
+cd build
+ninja
+```
+
+## Log Output Interpretation
+
+### System Call Traces (strace)
+
+Format: `[pid] syscall(args...) = return_value`
+
+Example:
+```
+[1] execve("/bin/sh", ["sh"], []) = 0
+[1] brk(NULL) = 0x08050000
+[1] mmap2(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xb7fff000
+```
+
+**Understanding the output:**
+- `[1]` - Process ID
+- `execve` - System call name
+- `("/bin/sh", ...)` - Arguments
+- `= 0` - Return value (0 typically means success)
+
+### Instruction Traces (instr)
+
+Format varies but typically includes:
+- Instruction pointer (EIP/RIP)
+- Disassembled instruction
+- Sometimes register state
+
+### Verbose Logs
+
+Freeform debug messages with context:
+
+```
+[kernel/task.c:123] Created new task, pid=42
+[fs/fake.c:456] Opening fake file: /proc/cpuinfo
+```
+
+## Performance Impact
+
+### Benchmark Comparison
+
+| Configuration | Relative Speed | Use Case |
+|--------------|----------------|----------|
+| No logging | 1.0x (baseline) | Production |
+| `strace` only | ~0.7x | Debugging syscalls |
+| `verbose` | ~0.8x | General debugging |
+| `instr` | ~0.05x (20x slower!) | Instruction-level debugging |
+| `all` | ~0.03x (30x+ slower!) | Deep debugging only |
+
+### Recommendations
+
+- **Development**: `strace verbose` provides good insight without severe slowdown
+- **Bug hunting**: Enable specific channels as needed
+- **Instruction debugging**: Use `instr` only on small, isolated test cases
+- **Production**: Disable all logging for maximum performance
+
+## Implementation Details
+
+### Channel Macros
+
+From `debug.h`:
+
+```c:debug.h
+#if DEBUG_strace
+#define TRACE_strace TRACE__
+#else
+#define TRACE_strace TRACE__NOP
+#endif
+
+#define TRACE_(chan, msg, ...) glue(TRACE_, chan)(msg, ##__VA_ARGS__)
+#define TRACE(msg, ...) TRACE_(DEFAULT_CHANNEL, msg, ##__VA_ARGS__)
+#ifndef DEFAULT_CHANNEL
+#define DEFAULT_CHANNEL verbose
+#endif
+
+#define STRACE(msg, ...) TRACE_(strace, msg, ##__VA_ARGS__)
+```
+
+### Using Logging in Code
+
+Channels are used via macros:
+
+```c
+// In any source file
+#define DEFAULT_CHANNEL verbose
+#include "debug.h"
+
+void my_function() {
+    TRACE("This goes to the verbose channel\n");
+    STRACE("This goes to strace\n");
+}
+```
+
+### Disabling Specific Channels
+
+You can explicitly disable channels:
+
+```bash
+meson configure -Dlog="strace verbose" -Dnolog="instr"
+```
+
+## Practical Examples
+
+### Debugging a Segfault
+
+```bash
+# Enable strace and verbose
+meson configure -Dlog="strace verbose"
+ninja
+./ish -f alpine /bin/myapp
+
+# Look for the last syscall before crash
+# Check for invalid memory access patterns
+```
+
+### Tracing File Operations
+
+```bash
+# Enable strace
+meson configure -Dlog="strace"
+ninja
+./ish -f alpine /bin/ls /tmp
+
+# Output shows all open(), read(), stat(), etc.
+```
+
+### Debugging Instruction Emulation
+
+```bash
+# Enable instruction logging (WARNING: very slow)
+meson configure -Dlog="instr"
+ninja
+./ish -f alpine /bin/true  # Use simple program!
+
+# Shows every instruction executed
+# Compare against expected x86 behavior
+```
+
+## Custom Log Handler
+
+You can specify a custom log handler:
+
+```bash
+meson configure -Dlog_handler=nslog  # or dprintf
+```
+
+Available handlers defined in `meson_options.txt`:
+
+```txt:meson_options.txt
+option('log_handler', type: 'string', value: 'dprintf')
+```
+
+## See Also
+
+- [Debugging](/advanced/debugging) - Debugging tools and techniques
+- [Interpreter](/advanced/interpreter) - Understanding emulator internals

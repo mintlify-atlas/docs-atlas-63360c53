@@ -1,0 +1,475 @@
+---
+title: "Kernel API"
+description: "Process management, task scheduling, and kernel initialization"
+---
+
+The kernel API provides core operating system functionality including process lifecycle management, task scheduling, memory management, and signal handling.
+
+## Process Lifecycle
+
+### Task Creation
+
+```c kernel/task.h:108
+struct task *task_create_(struct task *parent);
+```
+
+Creates a new process and initializes fields from the parent.
+
+<ParamField path="parent" type="struct task *">
+  Parent task to inherit from, or NULL to create the init process
+</ParamField>
+
+<ResponseField name="return" type="struct task *">
+  Pointer to newly created task, or NULL if out of memory
+</ResponseField>
+
+**Example:**
+
+```c
+// Create a child process
+struct task *child = task_create_(current);
+if (child == NULL) {
+    return -ENOMEM;
+}
+```
+
+### Task Destruction
+
+```c kernel/task.h:110
+void task_destroy(struct task *task);
+```
+
+Removes the process from the process table and frees resources. Must be called with `pids_lock` held.
+
+### Process Execution
+
+```c kernel/task.h:190-191
+void task_start(struct task *task);
+void task_run_current(void);
+```
+
+<ParamField path="task_start" type="void">
+  Starts execution of a newly created task
+</ParamField>
+
+<ParamField path="task_run_current" type="void">
+  Runs the current task's CPU emulation loop
+</ParamField>
+
+## Task Structure
+
+The `task` structure represents a single thread of execution.
+
+```c kernel/task.h:17-93
+struct task {
+    struct cpu_state cpu;           // CPU registers and state
+    struct mm *mm;                  // Memory map (locked by general_lock)
+    struct mem *mem;                // Pointer to mm.mem for convenience
+    pthread_t thread;               // Host OS thread
+    uint64_t threadid;              // Unique thread identifier
+
+    struct tgroup *group;           // Thread group (immutable)
+    struct list group_links;        // Links in thread group list
+    pid_t_ pid, tgid;               // Process ID and thread group ID (immutable)
+    
+    // User and group IDs
+    uid_t_ uid, gid;                // Real user/group ID
+    uid_t_ euid, egid;              // Effective user/group ID
+    uid_t_ suid, sgid;              // Saved user/group ID
+    unsigned ngroups;
+    uid_t_ groups[MAX_GROUPS];      // Supplementary groups
+    
+    char comm[16];                  // Process name (locked by general_lock)
+    bool did_exec;                  // Has called execve
+
+    struct fdtable *files;          // File descriptor table
+    struct fs_info *fs;             // Filesystem info (cwd, root, umask)
+
+    // Signal handling (locked by sighand->lock)
+    struct sighand *sighand;        // Signal handlers
+    sigset_t_ blocked;              // Blocked signals
+    sigset_t_ pending;              // Pending signals
+    sigset_t_ waiting;              // Signals being waited on
+    struct list queue;              // Signal queue
+    cond_t pause;                   // For sigpause
+
+    // Process hierarchy (locked by pids_lock)
+    struct task *parent;            // Parent process
+    struct list children;           // Child processes
+    struct list siblings;           // Sibling processes
+
+    addr_t clear_tid;               // Address to clear on exit
+    addr_t robust_list;             // Robust futex list
+
+    // Exit state (locked by pids_lock)
+    dword_t exit_code;              // Exit status
+    bool zombie;                    // Is a zombie process
+    bool exiting;                   // Currently exiting
+
+    struct vfork_info *vfork;       // vfork synchronization
+    int exit_signal;                // Signal to send parent on exit
+
+    lock_t general_lock;            // General purpose lock
+};
+```
+
+### Current Task
+
+```c kernel/task.h:97
+extern __thread struct task *current;
+```
+
+Global thread-local variable pointing to the currently executing task.
+
+**Usage:**
+
+```c
+// Access current process ID
+pid_t my_pid = current->pid;
+
+// Access current CPU state
+addr_t ip = CPU_IP(&current->cpu);
+```
+
+### Task Memory Management
+
+```c kernel/task.h:99-103
+static inline void task_set_mm(struct task *task, struct mm *mm) {
+    task->mm = mm;
+    task->mem = &task->mm->mem;
+    task->cpu.mmu = &task->mem->mmu;
+}
+```
+
+Sets the memory map for a task and updates internal pointers.
+
+## Thread Groups
+
+A thread group represents multiple threads sharing the same process ID.
+
+```c kernel/task.h:127-167
+struct tgroup {
+    struct list threads;            // List of threads (locked by pids_lock)
+    struct task *leader;            // Thread group leader (immutable)
+    struct rusage_ rusage;          // Resource usage statistics
+
+    // Process group and session (locked by pids_lock)
+    pid_t_ sid, pgid;               // Session ID and process group ID
+    struct list session;            // Session list
+    struct list pgroup;             // Process group list
+
+    bool stopped;                   // Is group stopped
+    cond_t stopped_cond;            // Condition variable for stop state
+
+    struct tty *tty;                // Controlling terminal
+    struct timer *itimer;           // Interval timer
+    struct posix_timer posix_timers[TIMERS_MAX];  // POSIX timers
+
+    struct rlimit_ limits[RLIMIT_NLIMITS_];  // Resource limits
+
+    bool doing_group_exit;          // Group exit in progress
+    dword_t group_exit_code;        // Exit code for group exit
+
+    struct rusage_ children_rusage; // Child resource usage
+    cond_t child_exit;              // Child exit notification
+
+    dword_t personality;            // Process personality flags
+
+    lock_t lock;                    // Thread group lock
+};
+```
+
+**Check if task is thread group leader:**
+
+```c kernel/task.h:169-171
+static inline bool task_is_leader(struct task *task) {
+    return task->group->leader == task;
+}
+```
+
+## Process ID Management
+
+### PID Structure
+
+```c kernel/task.h:173-178
+struct pid {
+    dword_t id;                     // Numeric PID
+    struct task *task;              // Associated task
+    struct list session;            // Session list link
+    struct list pgroup;             // Process group list link
+};
+```
+
+### PID Lookup Functions
+
+```c kernel/task.h:181-185
+extern lock_t pids_lock;
+
+struct pid *pid_get(dword_t pid);
+struct task *pid_get_task(dword_t pid);
+struct task *pid_get_task_zombie(dword_t id);
+```
+
+All PID lookup functions must be called with `pids_lock` held.
+
+<ParamField path="pid_get" type="struct pid *">
+  Returns PID structure for given PID number
+</ParamField>
+
+<ParamField path="pid_get_task" type="struct task *">
+  Returns task for given PID, or NULL if zombie/nonexistent
+</ParamField>
+
+<ParamField path="pid_get_task_zombie" type="struct task *">
+  Returns task for given PID, including zombies
+</ParamField>
+
+**Example:**
+
+```c
+lock(&pids_lock);
+struct task *task = pid_get_task(pid);
+if (task != NULL) {
+    // Use task
+}
+unlock(&pids_lock);
+```
+
+## System Calls
+
+### Process Management
+
+```c kernel/calls.h:32-46
+dword_t sys_clone(dword_t flags, addr_t stack, addr_t ptid, addr_t tls, addr_t ctid);
+dword_t sys_fork(void);
+dword_t sys_vfork(void);
+dword_t sys_execve(addr_t file, addr_t argv, addr_t envp);
+int do_execve(const char *file, size_t argc, const char *argv, const char *envp);
+dword_t sys_exit(dword_t status);
+noreturn void do_exit(int status);
+noreturn void do_exit_group(int status);
+dword_t sys_exit_group(dword_t status);
+dword_t sys_wait4(pid_t_ pid, addr_t status_addr, dword_t options, addr_t rusage_addr);
+dword_t sys_waitid(int_t idtype, pid_t_ id, addr_t info_addr, int_t options);
+dword_t sys_waitpid(pid_t_ pid, addr_t status_addr, dword_t options);
+```
+
+### Memory Management
+
+```c kernel/calls.h:49-66
+addr_t sys_brk(addr_t new_brk);
+addr_t sys_mmap(addr_t args_addr);
+addr_t sys_mmap2(addr_t addr, dword_t len, dword_t prot, dword_t flags, fd_t fd_no, dword_t offset);
+int_t sys_munmap(addr_t addr, addr_t len);
+int_t sys_mprotect(addr_t addr, addr_t len, int_t prot);
+addr_t sys_mremap(addr_t addr, addr_t old_len, addr_t new_len, dword_t flags);
+```
+
+<ParamField path="sys_brk" type="addr_t">
+  Adjusts the program break (heap end). Returns new break address.
+</ParamField>
+
+<ParamField path="sys_mmap" type="addr_t">
+  Maps memory region. Returns mapped address or error.
+</ParamField>
+
+<ParamField path="sys_munmap" type="int_t">
+  Unmaps memory region. Returns 0 on success.
+</ParamField>
+
+### Process Information
+
+```c kernel/calls.h:201-237
+pid_t_ sys_getpid(void);
+pid_t_ sys_gettid(void);
+pid_t_ sys_getppid(void);
+pid_t_ sys_getpgid(pid_t_ pid);
+dword_t sys_setpgid(pid_t_ pid, pid_t_ pgid);
+uid_t_ sys_getuid32(void);
+uid_t_ sys_geteuid32(void);
+uid_t_ sys_getgid32(void);
+uid_t_ sys_getegid32(void);
+int_t sys_setuid(uid_t uid);
+int_t sys_setgid(uid_t gid);
+dword_t sys_setresuid(uid_t_ ruid, uid_t_ euid, uid_t_ suid);
+dword_t sys_setresgid(uid_t_ rgid, uid_t_ egid, uid_t_ sgid);
+```
+
+## Signal Handling
+
+### Signal Functions
+
+```c kernel/signal.h:123-137
+void send_signal(struct task *task, int sig, struct siginfo_ info);
+void deliver_signal(struct task *task, int sig, struct siginfo_ info);
+bool try_self_signal(int sig);
+int send_group_signal(dword_t pgid, int sig, struct siginfo_ info);
+void receive_signals(void);
+void sigmask_set_temp(sigset_t_ mask);
+```
+
+<ParamField path="send_signal" type="void">
+  Sends a signal to a task (respects blocking and ignoring)
+</ParamField>
+
+<ParamField path="deliver_signal" type="void">
+  Delivers signal regardless of blocking/ignoring
+</ParamField>
+
+<ParamField path="receive_signals" type="void">
+  Checks for and delivers pending signals on current task
+</ParamField>
+
+### Signal Structures
+
+```c kernel/signal.h:19-24
+struct sigaction_ {
+    addr_t handler;     // Signal handler address
+    ureg_t flags;       // Signal flags (SA_*)
+    addr_t restorer;    // Signal restorer function
+    sigset_t_ mask;     // Signals to block during handler
+};
+```
+
+```c kernel/signal.h:74-104
+struct siginfo_ {
+    int_t sig;          // Signal number
+    int_t sig_errno;    // Error number
+    int_t code;         // Signal code (SI_USER, SI_KERNEL, etc.)
+    union {
+        struct {
+            pid_t_ pid;
+            uid_t_ uid;
+        } kill;
+        struct {
+            pid_t_ pid;
+            uid_t_ uid;
+            int_t status;
+            clock_t_ utime;
+            clock_t_ stime;
+        } child;
+        struct {
+            addr_t addr;
+        } fault;
+        struct {
+            int_t timer;
+            int_t overrun;
+            union sigval_ value;
+        } timer;
+    };
+};
+```
+
+### Signal Set Operations
+
+```c kernel/signal.h:162-175
+static inline sigset_t_ sig_mask(int sig);
+static inline bool sigset_has(sigset_t_ set, int sig);
+static inline void sigset_add(sigset_t_ *set, int sig);
+static inline void sigset_del(sigset_t_ *set, int sig);
+```
+
+**Example:**
+
+```c
+// Block SIGINT
+sigset_t_ mask = 0;
+sigset_add(&mask, SIGINT_);
+current->blocked |= mask;
+
+// Check if SIGUSR1 is pending
+if (sigset_has(current->pending, SIGUSR1_)) {
+    // Handle signal
+}
+```
+
+## Initialization
+
+### Kernel Initialization Functions
+
+```c kernel/init.c:89-119
+int become_first_process();
+int become_new_init_child();
+```
+
+<ParamField path="become_first_process" type="int">
+  Initializes the first process (PID 1). Returns 0 on success.
+</ParamField>
+
+<ParamField path="become_new_init_child" type="int">
+  Creates a new child of init for isolated execution. Returns 0 on success.
+</ParamField>
+
+### Mount Root Filesystem
+
+```c kernel/init.c:12-20
+int mount_root(const struct fs_ops *fs, const char *source);
+```
+
+Mounts the root filesystem.
+
+**Example:**
+
+```c
+#include "fs/real.h"
+
+int err = mount_root(&realfs, "/path/to/rootfs");
+if (err < 0) {
+    fprintf(stderr, "Failed to mount root: %d\n", err);
+    return err;
+}
+```
+
+### Standard I/O Setup
+
+```c kernel/init.c:128-184
+int create_stdio(const char *file, int major, int minor);
+int create_piped_stdio();
+void set_console_device(int major, int minor);
+```
+
+<ParamField path="create_stdio" type="int">
+  Opens a device file for stdin/stdout/stderr
+</ParamField>
+
+<ParamField path="create_piped_stdio" type="int">
+  Uses host stdin/stdout/stderr for the emulated process
+</ParamField>
+
+## Session and Process Groups
+
+```c kernel/task.h:114-115
+pid_t_ task_setsid(struct task *task);
+void task_leave_session(struct task *task);
+```
+
+**Example:**
+
+```c
+// Create new session
+pid_t_ sid = task_setsid(current);
+```
+
+## Permissions
+
+```c kernel/task.h:195
+#define superuser() (current != NULL && current->euid == 0)
+```
+
+Checks if the current task has superuser privileges.
+
+**Usage:**
+
+```c
+if (!superuser()) {
+    return -EPERM;
+}
+```
+
+## Thread Management
+
+```c kernel/task.h:198-199
+void update_thread_name(void);
+```
+
+Updates the host thread name to match the current task in the format "comm-pid".

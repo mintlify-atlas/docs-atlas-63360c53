@@ -1,0 +1,272 @@
+---
+title: Contributing to iSH
+description: How to contribute code, documentation, and bug reports to the iSH project
+---
+
+## Overview
+
+iSH is an open-source project that welcomes contributions from the community. Whether you're fixing bugs, adding features, improving documentation, or reporting issues, your contributions help make iSH better for everyone.
+
+<Note>
+iSH is available on [GitHub](https://github.com/ish-app/ish) and uses Git submodules, so make sure to clone with `--recurse-submodules` or run `git submodule update --init` after cloning.
+</Note>
+
+## Getting Started
+
+<Steps>
+  <Step title="Set up your development environment">
+    First, ensure you have all the required dependencies installed:
+    
+    **Required tools:**
+    - Python 3 with Meson (`pip3 install meson`)
+    - Ninja build system
+    - Clang and LLD compiler/linker
+      - macOS: `brew install llvm`
+      - Debian/Ubuntu: `sudo apt install clang lld`
+      - Arch Linux: `sudo pacman -S clang lld`
+    - sqlite3 (usually pre-installed)
+    - libarchive
+      - macOS: `brew install libarchive` or `sudo port install libarchive`
+      - Debian/Ubuntu: `sudo apt install libarchive-dev`
+    
+    See the [Building for iOS](/building/ios) and [Building CLI Tool](/building/cli) pages for detailed build instructions.
+  </Step>
+  
+  <Step title="Clone the repository">
+    Clone the iSH repository with submodules:
+    
+    ```bash
+    git clone --recurse-submodules https://github.com/ish-app/ish.git
+    cd ish
+    ```
+    
+    If you already cloned without submodules:
+    
+    ```bash
+    git submodule update --init
+    ```
+  </Step>
+  
+  <Step title="Build and test">
+    Build the project to ensure everything is working:
+    
+    **For iOS (Xcode):**
+    1. Open the project in Xcode
+    2. Open `iSH.xcconfig` and change `ROOT_BUNDLE_IDENTIFIER` to something unique
+    3. Update the development team ID in the project build settings
+    4. Click Run
+    
+    **For command-line tool:**
+    ```bash
+    meson build
+    cd build
+    ninja
+    ```
+    
+    Test your build to ensure it works correctly before making changes.
+  </Step>
+  
+  <Step title="Make your changes">
+    Create a new branch for your work:
+    
+    ```bash
+    git checkout -b feature/my-contribution
+    ```
+    
+    Make your changes following the project's code conventions (see below).
+  </Step>
+  
+  <Step title="Test thoroughly">
+    Before submitting, test your changes:
+    - Build and run the iOS app or CLI tool
+    - Test the specific functionality you modified
+    - Enable logging channels to debug (see [Logging & Debugging](/advanced/logging))
+    - Run `dmesg` for system call errors if applicable
+  </Step>
+  
+  <Step title="Submit a pull request">
+    Push your branch and create a pull request on GitHub:
+    
+    ```bash
+    git push origin feature/my-contribution
+    ```
+    
+    Write a clear PR description explaining:
+    - What problem your changes solve
+    - How you tested the changes
+    - Any relevant background or context
+  </Step>
+</Steps>
+
+## Code Style and Conventions
+
+### General Guidelines
+
+- Follow the existing code style in the file you're editing
+- Keep changes focused and atomic - one logical change per PR
+- Write clear commit messages that explain the "why" not just the "what"
+- Comment complex logic, especially in the emulator core
+
+### Assembly Code
+
+<Warning>
+Much of iSH's interpreter is written in assembly language for performance. This code can be challenging to work with. If you're modifying assembly:
+- Study the existing macro patterns carefully
+- Test extensively - assembly bugs can be subtle
+- Expect compiler/assembler quirks and linker challenges
+- Add comments to explain non-obvious logic
+</Warning>
+
+The assembly code uses threaded code technique with function pointers (gadgets). See the [Interpreter](/advanced/interpreter) page for background.
+
+### Logging
+
+When adding debug logging, use the appropriate channel:
+- `strace` - System call parameters and return values
+- `instr` - Individual instruction execution (very verbose)
+- `verbose` - General debug information
+
+See [Logging & Debugging](/advanced/logging) for how to enable channels.
+
+## Reporting Issues
+
+Before opening an issue, check the [existing issues](https://github.com/ish-app/ish/issues) and [commit logs](https://github.com/ish-app/ish/commits/master) for current project status.
+
+### Bug Reports
+
+When reporting bugs, include:
+
+<AccordionGroup>
+  <Accordion title="For crashes" icon="bug">
+    Include a crash dump from your device:
+    - **iOS 12+**: Settings → Privacy → Analytics → Analytics Data
+    - **iOS 11**: Settings → Privacy → Diagnostics and Usage
+    
+    Look for crash logs related to iSH and attach them to your issue.
+  </Accordion>
+  
+  <Accordion title="For system call errors" icon="terminal">
+    If you see errors like:
+    - "Bad system call"
+    - "Illegal instruction"
+    - "Segmentation fault"
+    
+    Run `dmesg` in iSH to get log messages and include the relevant output in your issue.
+  </Accordion>
+  
+  <Accordion title="General information" icon="circle-info">
+    For all bug reports, include:
+    - Steps to reproduce the issue
+    - Expected vs. actual behavior
+    - iSH version (App Store or TestFlight build number)
+    - iOS version
+    - Device model
+  </Accordion>
+</AccordionGroup>
+
+### Feature Requests
+
+For feature requests:
+- Explain the use case and why it would be valuable
+- Consider technical feasibility within iOS constraints
+- Check if it's already been discussed in issues or on Discord
+
+## Documentation Contributions
+
+Documentation improvements are always welcome:
+
+- Fix typos, unclear explanations, or outdated information
+- Add examples and use cases
+- Expand on technical concepts
+- Improve organization and navigation
+
+Documentation is built with Mintlify. See the [docs repository](https://github.com/ish-app/ish/wiki) for contribution guidelines.
+
+## Testing and Validation
+
+### Unit Testing
+
+While iSH doesn't have extensive automated tests, you should manually test:
+
+1. **System calls** - Verify your changes don't break existing syscalls
+2. **Emulation** - Test with real programs (compilers, interpreters, utilities)
+3. **Edge cases** - Try unusual inputs and error conditions
+4. **Performance** - Check that changes don't significantly impact speed
+
+### Debugging Tools
+
+<Accordion title="ptraceomatic for instruction-level debugging">
+  On 64-bit Linux 4.11+, use `tools/ptraceomatic` instead of `ish` to run programs:
+  
+  ```bash
+  ./tools/ptraceomatic -f alpine /bin/sh
+  ```
+  
+  This runs the program in a real process and single-steps to compare registers at each step, useful for debugging emulation issues.
+</Accordion>
+
+### Logging Channels
+
+Enable logging to understand what's happening:
+
+**Xcode:**
+```
+# In iSH.xcconfig
+ISH_LOG = strace verbose
+```
+
+**Meson (CLI):**
+```bash
+meson configure -Dlog="strace verbose"
+```
+
+See [Logging & Debugging](/advanced/logging) for full details.
+
+## Code Review Process
+
+1. **Automated checks** - CI builds must pass
+2. **Maintainer review** - A project maintainer will review your code
+3. **Discussion** - Be responsive to feedback and questions
+4. **Iteration** - Make requested changes and push updates
+5. **Merge** - Once approved, your PR will be merged
+
+<Tip>
+Be patient - maintainers are often busy, and complex changes may take time to review thoroughly.
+</Tip>
+
+## Community Guidelines
+
+- Be respectful and constructive in all interactions
+- Help others when you can
+- Focus on technical merit of ideas
+- Understand that not all contributions can be accepted
+- iOS limitations may prevent certain features from being feasible
+
+## Getting Help
+
+If you need help contributing:
+
+- Join the [Discord server](https://discord.gg/HFAXj44) and ask in the development channels
+- Check the [Wiki](https://github.com/ish-app/ish/wiki) for tutorials and guides
+- Look at recent commits and PRs for examples
+- Read the [FAQ](/community/faq) for common questions
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Build for iOS" icon="apple" href="/building/ios">
+    Set up Xcode and build iSH for your iOS device
+  </Card>
+  
+  <Card title="Build CLI Tool" icon="terminal" href="/building/cli">
+    Build the command-line testing tool
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Understand how iSH works internally
+  </Card>
+  
+  <Card title="Interpreter" icon="gears" href="/advanced/interpreter">
+    Learn about the threaded code interpreter
+  </Card>
+</CardGroup>

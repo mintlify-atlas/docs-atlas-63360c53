@@ -1,0 +1,520 @@
+---
+title: Frequently Asked Questions
+description: Common questions about iSH, its capabilities, limitations, and usage
+---
+
+## General Questions
+
+<AccordionGroup>
+  <Accordion title="What is iSH?" icon="circle-question">
+    iSH is a Linux shell environment for iOS that uses usermode x86/x86_64 emulation and syscall translation to run a full Alpine Linux userspace on your iPhone or iPad.
+    
+    Unlike traditional virtualization, iSH emulates x86 instructions and translates Linux system calls to iOS equivalents, allowing Linux programs to run directly on iOS without requiring a full virtual machine or jailbreak.
+    
+    **Key features:**
+    - Full Alpine Linux environment with package management
+    - x86/x86_64 instruction emulation on ARM
+    - System call translation layer
+    - Terminal emulator with TTY/PTY support
+    - Files app integration for file access
+    - No jailbreak required
+    
+    See [Architecture Overview](/architecture/overview) for technical details.
+  </Accordion>
+  
+  <Accordion title="What can I run on iSH?" icon="terminal">
+    iSH can run most command-line Linux programs that:
+    - Are compiled for x86 or x86_64 architecture
+    - Don't require kernel modules or special hardware
+    - Work within iOS security constraints
+    - Are available in Alpine Linux repositories or can be compiled from source
+    
+    **Common use cases:**
+    - **Programming**: Python, Node.js, Ruby, Perl, C/C++ compilers
+    - **Text processing**: vim, nano, sed, awk, grep
+    - **Development tools**: git, make, gcc, clang
+    - **Scripting**: bash/sh scripts, automation tools
+    - **Utilities**: curl, wget, ssh, rsync, tar
+    - **Web servers**: nginx, lighttpd (for local development)
+    
+    **Installing packages:**
+    ```bash
+    # Update package index
+    apk update
+    
+    # Install packages
+    apk add python3 nodejs git vim
+    ```
+    
+    See the [Alpine Linux package database](https://pkgs.alpinelinux.org/packages) for available software.
+  </Accordion>
+  
+  <Accordion title="Does it support all Linux programs?" icon="linux">
+    No. iSH has several limitations due to emulation constraints and iOS restrictions:
+    
+    **Programs that WON'T work:**
+    - GUI applications (X11, Wayland) - iOS doesn't support Linux graphics
+    - Programs requiring kernel modules (Docker, VirtualBox)
+    - Hardware-specific tools (direct hardware access blocked by iOS)
+    - Programs for ARM architecture only (must be x86/x86_64)
+    - Software requiring privileged operations iOS doesn't allow
+    
+    **Programs with LIMITED support:**
+    - Network tools requiring raw sockets (ping, traceroute) - iOS restrictions
+    - Multi-threading intensive apps - emulation overhead
+    - Programs requiring specific kernel versions or features
+    - Software with heavy system call usage - translation overhead
+    
+    **Best results with:**
+    - Single-threaded command-line tools
+    - Interpreted languages (Python, JavaScript, Ruby)
+    - Text processing and scripting
+    - Development tools and compilers
+    - File manipulation utilities
+    
+    When in doubt, try it! Most failures will be obvious immediately.
+  </Accordion>
+  
+  <Accordion title="How is performance?" icon="gauge-high">
+    Performance varies significantly based on the workload:
+    
+    **Good performance:**
+    - Text processing (sed, awk, grep)
+    - File operations
+    - Simple scripts and utilities
+    - I/O-bound operations
+    
+    **Acceptable performance:**
+    - Python/Node.js/Ruby scripts
+    - Compiling small programs
+    - Web servers for light development
+    - Git operations
+    
+    **Slower performance:**
+    - CPU-intensive computations (3-10x slower than native)
+    - Compiling large projects
+    - Heavy multi-threading
+    - Tight loops and number crunching
+    
+    **Why it's slower:**
+    - x86 instructions must be emulated on ARM
+    - System calls require translation overhead
+    - Emulation uses threaded code interpretation, not native JIT compilation
+    - iOS background restrictions limit CPU usage
+    
+    The interpreter uses a threaded code technique with gadgets (function pointers) for roughly 3-5x speedup over simple switch dispatch. See [Interpreter](/advanced/interpreter) for technical details.
+    
+    <Tip>
+    For best performance, prefer I/O-bound tasks over CPU-bound ones, and use interpreted languages when possible.
+    </Tip>
+  </Accordion>
+  
+  <Accordion title="Can I run GUI applications?" icon="window-maximize">
+    **No**, iSH does not support GUI applications. Here's why:
+    
+    - iOS doesn't allow apps to run X11 or Wayland servers
+    - Linux GUI frameworks (GTK, Qt) can't draw to iOS windows
+    - No VNC or remote desktop server (iOS restrictions)
+    - Terminal-only environment by design
+    
+    **What you CAN do:**
+    - Run terminal-based programs (vim, nano, htop, etc.)
+    - Use text-based user interfaces (TUI)
+    - Run web servers and access via Safari (localhost)
+    - Use SSH to connect to remote GUI systems
+    
+    **Workarounds for common needs:**
+    
+    ```bash
+    # Text-based file managers
+    apk add mc ranger
+    
+    # TUI system monitors
+    apk add htop btop
+    
+    # Web-based interfaces (access via browser)
+    apk add nginx
+    # Configure nginx to serve web apps
+    ```
+    
+    Some users run web-based IDEs (like code-server) and access them through Safari, providing a GUI-like experience within the browser.
+  </Accordion>
+</AccordionGroup>
+
+## Security and Privacy
+
+<AccordionGroup>
+  <Accordion title="Is my data safe?" icon="shield">
+    **Data isolation:**
+    - iSH runs in an iOS sandbox with no access to other apps' data
+    - Your files are stored in iSH's container, separate from iOS
+    - Files app integration is optional and controlled by you
+    - Network access requires your permission
+    
+    **Security considerations:**
+    - iSH itself doesn't collect or transmit personal data
+    - Packages you install may have their own privacy policies
+    - Network connections go through iOS network stack
+    - Crash reports (if enabled) go to Apple, not iSH developers
+    
+    **Best practices:**
+    - Only install packages from trusted sources (Alpine repos)
+    - Be careful with scripts from unknown sources
+    - Use SSH keys instead of passwords when possible
+    - Don't store sensitive data unencrypted
+    - Keep iSH updated for security fixes
+    
+    **iOS limitations (for your protection):**
+    - Can't access other apps' data
+    - Can't modify system files
+    - Can't run privileged operations
+    - Network access controlled by iOS
+    
+    Your data is as safe as any iOS app's sandboxed storage.
+  </Accordion>
+  
+  <Accordion title="Does iSH require jailbreak?" icon="lock">
+    **No!** iSH is available on the App Store and requires no jailbreak.
+    
+    iSH achieves Linux compatibility through:
+    - **Usermode emulation** - No kernel modifications needed
+    - **Syscall translation** - Linux calls mapped to iOS APIs
+    - **Sandboxed execution** - Runs within iOS security model
+    
+    This is completely different from jailbreaking, which modifies iOS itself. iSH works within Apple's approved APIs.
+    
+    <Note>
+    Because iSH doesn't require jailbreak, it has some limitations compared to jailbroken Linux environments. But it's much safer and works on any iOS device.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="How do I report bugs?" icon="bug">
+    If you encounter a bug or crash, follow these steps:
+    
+    <Steps>
+      <Step title="Check existing issues">
+        Search [GitHub Issues](https://github.com/ish-app/ish/issues) to see if it's already reported.
+      </Step>
+      
+      <Step title="Gather information">
+        Collect relevant details:
+        
+        **For crashes:**
+        - iOS 12+: Settings → Privacy → Analytics → Analytics Data
+        - iOS 11: Settings → Privacy → Diagnostics and Usage
+        - Look for iSH crash logs
+        
+        **For system call errors ("Bad system call", "Illegal instruction", "Segmentation fault"):**
+        ```bash
+        dmesg
+        ```
+        Include relevant output from dmesg in your report.
+        
+        **Always include:**
+        - Steps to reproduce
+        - Expected vs. actual behavior
+        - iSH version (App Store or TestFlight build)
+        - iOS version and device model
+      </Step>
+      
+      <Step title="Create an issue">
+        Open a [new issue](https://github.com/ish-app/ish/issues/new) on GitHub with all the information from step 2.
+        
+        Use a clear, descriptive title like "App crashes when running git clone" instead of "Crash bug".
+      </Step>
+    </Steps>
+    
+    See [Contributing](/community/contributing) for detailed bug reporting guidelines.
+  </Accordion>
+  
+  <Accordion title="Where can I get help?" icon="life-ring">
+    Several resources are available:
+    
+    **For quick questions:**
+    - [Discord server](https://discord.gg/HFAXj44) - Real-time community help
+    - This FAQ - Common questions and answers
+    
+    **For tutorials and guides:**
+    - [Wiki](https://github.com/ish-app/ish/wiki) - Community documentation
+    - [iSH documentation](/introduction) - Official technical docs
+    
+    **For bug reports:**
+    - [GitHub Issues](https://github.com/ish-app/ish/issues) - Report bugs with details
+    
+    **For development questions:**
+    - Discord development channels
+    - GitHub Discussions
+    - Source code and comments
+    
+    <Tip>
+    Start with Discord for general help - the community is very responsive. Use GitHub Issues only for confirmed bugs.
+    </Tip>
+    
+    See [Discord Community](/community/discord) for more on getting help.
+  </Accordion>
+  
+  <Accordion title="Why isn't package X working?" icon="box">
+    If a package doesn't work, it could be due to:
+    
+    **1. iOS restrictions**
+    ```bash
+    # Example: ping requires raw sockets
+    ping google.com
+    # Error: Operation not permitted
+    ```
+    iOS blocks raw sockets for security. Many network tools won't work.
+    
+    **2. Missing dependencies**
+    ```bash
+    # Check package dependencies
+    apk info -R package-name
+    
+    # Install dependencies
+    apk add dependency1 dependency2
+    ```
+    
+    **3. Architecture mismatch**
+    Some packages may only be available for ARM, not x86.
+    ```bash
+    # Check available architectures
+    apk search -v package-name
+    ```
+    
+    **4. Emulation limitations**
+    Programs using unimplemented system calls or kernel features may fail.
+    ```bash
+    # Check dmesg for errors
+    dmesg | tail -n 20
+    ```
+    
+    **5. Configuration needed**
+    Some programs require configuration files or environment setup.
+    
+    **Debugging steps:**
+    1. Run the program and note the error
+    2. Check `dmesg` for system call failures
+    3. Enable logging (see [Logging](/advanced/logging))
+    4. Search GitHub Issues for similar problems
+    5. Ask on Discord with error details
+  </Accordion>
+  
+  <Accordion title="iSH is running slow, how can I speed it up?" icon="rabbit">
+    Several factors affect performance:
+    
+    **iOS background restrictions:**
+    - iOS throttles background apps heavily
+    - Keep iSH in foreground for full performance
+    - Disable Low Power Mode for better CPU access
+    
+    **Optimize your workflow:**
+    ```bash
+    # Use Alpine's lightweight alternatives
+    apk add busybox  # Already included
+    
+    # Avoid heavy desktop software
+    # Don't install unnecessary packages
+    apk del package-name
+    
+    # Clear package cache
+    apk cache clean
+    ```
+    
+    **Better performance tips:**
+    - Prefer interpreted languages (Python, Node) over compiled loops
+    - Use built-in shell commands when possible
+    - Avoid CPU-intensive computations
+    - Keep package count minimal
+    - Use incremental builds (make -j1 instead of -j8)
+    
+    **What won't help:**
+    - "Performance tuning" sysctls (not implemented)
+    - Kernel parameters (iOS kernel not configurable)
+    - Overclocking (not possible on iOS)
+    
+    **Consider alternatives for heavy tasks:**
+    - Use remote servers via SSH for compilation
+    - Use cloud IDEs for development
+    - Run compute tasks on a desktop, use iSH for light work
+    
+    Remember: iSH is best for lightweight scripting, text processing, and development tasks, not heavy computation.
+  </Accordion>
+</AccordionGroup>
+
+## Usage Questions
+
+<AccordionGroup>
+  <Accordion title="How do I access iOS files from iSH?" icon="folder">
+    iSH integrates with iOS Files app through a File Provider extension:
+    
+    **From iOS to iSH:**
+    1. Open Files app on iOS
+    2. Look for "iSH" in Locations
+    3. Browse and copy files to iSH filesystem
+    4. Files appear in iSH's home directory or chosen location
+    
+    **From iSH to iOS:**
+    1. Create/move files in iSH to a location you want to share
+    2. Open Files app
+    3. Navigate to iSH location
+    4. Copy, share, or open files with iOS apps
+    
+    **Command line access:**
+    ```bash
+    # Your home directory
+    cd ~
+    
+    # Create a file accessible from iOS
+    echo "Hello iOS" > shared.txt
+    
+    # Files in your home directory are visible in Files app
+    ```
+    
+    <Note>
+    File Provider integration may have some limitations. For large file transfers, consider using cloud storage or network transfers.
+    </Note>
+  </Accordion>
+  
+  <Accordion title="Can I run iSH in the background?" icon="arrow-down-to-line">
+    **Limited background execution:**
+    
+    iOS heavily restricts background processing for all apps, including iSH:
+    - Apps suspend after a few minutes in background
+    - CPU is throttled when not in foreground
+    - Network connections may be terminated
+    - Timers and background tasks are limited
+    
+    **What this means:**
+    - Long-running scripts will pause when you switch apps
+    - Downloads may stop in background
+    - Background compilation will be very slow or suspended
+    
+    **Workarounds:**
+    ```bash
+    # Use screen/tmux to preserve sessions
+    apk add screen tmux
+    
+    # Start a screen session
+    screen
+    # Run your command
+    ./long-running-script.sh
+    # Detach with Ctrl+A, D
+    
+    # Reattach later
+    screen -r
+    ```
+    
+    While screen/tmux preserve your terminal session, iOS will still suspend the process. They're useful for resuming work, not true background execution.
+    
+    **Best practices:**
+    - Keep iSH in foreground for long tasks
+    - Use cloud servers for background jobs
+    - Break work into shorter tasks
+    - Disable Auto-Lock: Settings → Display & Brightness → Auto-Lock → Never
+  </Accordion>
+  
+  <Accordion title="How do I upgrade iSH?" icon="arrow-up">
+    **Upgrading the iSH app:**
+    
+    **App Store version:**
+    1. Open App Store
+    2. Go to Updates tab
+    3. Update iSH when available
+    
+    **TestFlight beta:**
+    1. Open TestFlight app
+    2. Updates install automatically or tap Update
+    
+    Your filesystem and data persist across app updates.
+    
+    **Upgrading Alpine Linux packages:**
+    ```bash
+    # Update package index
+    apk update
+    
+    # Upgrade all installed packages
+    apk upgrade
+    
+    # Upgrade specific package
+    apk upgrade package-name
+    ```
+    
+    **Upgrading Alpine version:**
+    iSH comes with a specific Alpine version. To upgrade Alpine itself:
+    ```bash
+    # Check current version
+    cat /etc/alpine-release
+    
+    # Upgrading Alpine versions is complex and risky
+    # Recommended: Fresh iSH install if you need newer Alpine
+    ```
+    
+    <Warning>
+    Major Alpine upgrades can break things. Back up important data before major changes.
+    </Warning>
+  </Accordion>
+  
+  <Accordion title="Can I SSH into iSH?" icon="network-wired">
+    **No inbound SSH** - iOS doesn't allow apps to listen on network ports for incoming connections from outside the device.
+    
+    **What you CAN do:**
+    
+    **1. SSH out from iSH:**
+    ```bash
+    # Install OpenSSH client
+    apk add openssh-client
+    
+    # Connect to remote servers
+    ssh user@remote-server.com
+    
+    # Generate SSH keys
+    ssh-keygen -t ed25519
+    ```
+    
+    **2. Local connections only:**
+    You can run SSH server for localhost connections:
+    ```bash
+    apk add openssh-server
+    /usr/sbin/sshd
+    ssh user@localhost
+    ```
+    
+    But iOS restrictions prevent external devices from connecting to your iPhone's SSH server.
+    
+    **Alternatives:**
+    - Use SSH to connect to a real server from iSH
+    - Use Mosh (mobile shell) for better mobile connections
+    - Use cloud-based development environments
+    
+    ```bash
+    # Mosh for unstable connections
+    apk add mosh-client
+    mosh user@server
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Still Have Questions?
+
+If your question isn't answered here:
+
+<CardGroup cols={2}>
+  <Card title="Join Discord" icon="discord" href="https://discord.gg/HFAXj44">
+    Ask the community in real-time
+  </Card>
+  
+  <Card title="Check the Wiki" icon="book" href="https://github.com/ish-app/ish/wiki">
+    Browse tutorials and guides
+  </Card>
+  
+  <Card title="Search GitHub Issues" icon="github" href="https://github.com/ish-app/ish/issues">
+    See if others have asked the same question
+  </Card>
+  
+  <Card title="Read the Docs" icon="book-open" href="/introduction">
+    Explore technical documentation
+  </Card>
+</CardGroup>

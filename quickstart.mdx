@@ -1,80 +1,726 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart guide
+description: Get started with iSH by learning essential commands, installing packages, and exploring your Linux environment
 ---
 
-## Get started in three steps
+Now that you have iSH installed, this guide will help you get productive quickly by introducing essential commands, package management, and common workflows.
 
-Get your documentation site running locally and make your first customization.
+## Your first commands
 
-### Step 1: Set up your local environment
+When you open iSH, you're greeted with a shell prompt. Let's start with some basic commands to orient yourself:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+### Exploring the environment
+
+```bash
+# Display the current working directory
+pwd
+# Output: /root
+
+# List files in the current directory
+ls
+
+# List files with details (permissions, size, date)
+ls -la
+
+# Display information about the system
+uname -a
+
+# Check which shell you're using
+echo $SHELL
+# Output: /bin/ash
+
+# View the Alpine Linux version
+cat /etc/alpine-release
+```
+
+<Info>
+iSH runs Alpine Linux, which uses busybox to provide common Unix utilities. The default shell is `ash` (Almquist shell), a lightweight POSIX-compliant shell.
+</Info>
+
+### Testing your environment
+
+Verify that core functionality works:
+
+```bash
+# Test network connectivity
+ping -c 3 google.com
+
+# Check available memory
+free -m
+
+# View running processes
+ps aux
+
+# Display disk usage
+df -h
+
+# Show current date and time
+date
+```
+
+<Warning>
+If `ping` doesn't work, ensure iSH has network access permission in iOS Settings → iSH → Local Network.
+</Warning>
+
+## Package management with apk
+
+Alpine Linux uses `apk` (Alpine Package Keeper) as its package manager. This is how you install, update, and remove software in iSH.
+
+### Understanding apk
+
+The apk package manager is your gateway to thousands of Linux packages. It's similar to `apt` on Debian/Ubuntu or `yum` on Red Hat/CentOS.
+
+<Steps>
+  <Step title="Update package indices">
+    Before installing any packages, update the repository indices to get the latest package information:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    apk update
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    This downloads the package lists from Alpine's repositories. You should run this regularly, especially before installing new software.
+  </Step>
 
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+  <Step title="Search for packages">
+    Find packages by name or description:
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
+    ```bash
+    # Search for a package
+    apk search python
+    
+    # Search with descriptions
+    apk search -d python
+    
+    # Search for a specific package
+    apk search -e git
+    ```
+  </Step>
+
+  <Step title="Install packages">
+    Install software with the `add` command:
+    
+    ```bash
+    # Install a single package
+    apk add git
+    
+    # Install multiple packages
+    apk add python3 py3-pip
+    
+    # Install with automatic yes to prompts
+    apk add --no-cache nodejs npm
+    ```
+  </Step>
+
+  <Step title="Remove packages">
+    Uninstall packages you no longer need:
+    
+    ```bash
+    # Remove a package
+    apk del package-name
+    
+    # Remove multiple packages
+    apk del package1 package2
+    ```
+  </Step>
+</Steps>
+
+### Essential apk commands
+
+Here's a quick reference for common apk operations:
+
+```bash
+# Update repository indices
+apk update
+
+# Upgrade all installed packages
+apk upgrade
+
+# Install a package
+apk add <package-name>
+
+# Remove a package
+apk del <package-name>
+
+# Search for packages
+apk search <query>
+
+# Get information about a package
+apk info <package-name>
+
+# List installed packages
+apk list --installed
+
+# Clean the package cache
+apk cache clean
+```
+
+<Tip>
+The `--no-cache` flag when installing packages prevents apk from caching package files, saving storage space on your iOS device.
+</Tip>
+
+## Installing essential tools
+
+Let's install some commonly used tools to make your iSH environment more powerful:
+
+### Development tools
+
+<Tabs>
+  <Tab title="Python">
+    Install Python 3 and pip for Python development:
+    
+    ```bash
+    # Install Python 3 and pip
+    apk add python3 py3-pip
+    
+    # Verify installation
+    python3 --version
+    pip3 --version
+    
+    # Install a Python package
+    pip3 install requests
+    
+    # Run a Python script
+    python3 -c "print('Hello from iSH!')"
+    ```
+    
+    <Note>
+    Some Python packages with C extensions may not install correctly due to emulation limitations. Pure Python packages generally work well.
+    </Note>
+  </Tab>
+
+  <Tab title="Node.js">
+    Install Node.js and npm for JavaScript development:
+    
+    ```bash
+    # Install Node.js and npm
+    apk add nodejs npm
+    
+    # Verify installation
+    node --version
+    npm --version
+    
+    # Install a global package
+    npm install -g http-server
+    
+    # Run a Node.js command
+    node -e "console.log('Hello from iSH!')"
+    ```
+  </Tab>
+
+  <Tab title="Git">
+    Install Git for version control:
+    
+    ```bash
+    # Install Git
+    apk add git
+    
+    # Verify installation
+    git --version
+    
+    # Configure Git (use your information)
+    git config --global user.name "Your Name"
+    git config --global user.email "your.email@example.com"
+    
+    # Clone a repository
+    git clone https://github.com/username/repo.git
+    ```
+  </Tab>
+
+  <Tab title="Text Editors">
+    Install your preferred text editor:
+    
+    ```bash
+    # Install vim (powerful modal editor)
+    apk add vim
+    
+    # Install nano (beginner-friendly editor)
+    apk add nano
+    
+    # Install emacs (extensible editor)
+    apk add emacs-nox
+    
+    # Use an editor
+    vim myfile.txt
+    nano myfile.txt
+    ```
+    
+    <Tip>
+    If you're new to command-line editors, start with `nano`. It's more intuitive than `vim` and displays available commands at the bottom of the screen.
+    </Tip>
+  </Tab>
+</Tabs>
+
+### System utilities
+
+Enhance your shell experience with these utilities:
+
+```bash
+# Install bash (a more feature-rich shell than ash)
+apk add bash
+
+# Switch to bash
+bash
+
+# Install curl and wget for downloading files
+apk add curl wget
+
+# Install openssh for SSH client
+apk add openssh-client
+
+# Install tmux for terminal multiplexing
+apk add tmux
+
+# Install htop for better process monitoring
+apk add htop
+```
+
+## Working with files
+
+Understanding file operations is essential for working in iSH:
+
+### Basic file operations
+
+```bash
+# Create a new directory
+mkdir myproject
+
+# Change to that directory
+cd myproject
+
+# Create a new file
+touch README.md
+
+# Write content to a file using echo
+echo "# My Project" > README.md
+
+# Append to a file
+echo "This is a test project" >> README.md
+
+# View file contents
+cat README.md
+
+# Copy a file
+cp README.md README.backup
+
+# Move/rename a file
+mv README.backup BACKUP.md
+
+# Remove a file
+rm BACKUP.md
+
+# Remove a directory and its contents
+rm -rf myproject
+```
+
+### File system navigation
+
+```bash
+# Go to home directory
+cd ~
+# or simply:
+cd
+
+# Go to root directory
+cd /
+
+# Go back to previous directory
+cd -
+
+# Show directory structure
+ls -R
+
+# Find files by name
+find /root -name "*.txt"
+
+# Search file contents
+grep "search term" filename.txt
+
+# Search recursively in directory
+grep -r "search term" /path/to/directory
+```
+
+### Understanding Linux file structure
+
+iSH provides a standard Linux filesystem hierarchy:
+
+<Accordion title="/root - Root user's home directory">
+  This is your default working directory in iSH. Store your personal files and projects here.
+  
+  ```bash
+  cd /root
+  pwd  # Shows: /root
+  ```
 </Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Accordion title="/bin - Essential command binaries">
+  Contains basic commands like `ls`, `cp`, `mv`, and the shell itself.
+  
+  ```bash
+  ls /bin
+  ```
+</Accordion>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+<Accordion title="/etc - Configuration files">
+  System-wide configuration files, including package manager settings and shell configurations.
+  
+  ```bash
+  # View package repository configuration
+  cat /etc/apk/repositories
+  ```
+</Accordion>
 
-### Step 3: Go live
+<Accordion title="/tmp - Temporary files">
+  Temporary storage that may be cleared when iSH restarts.
+  
+  ```bash
+  cd /tmp
+  echo "temporary data" > test.txt
+  ```
+</Accordion>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
+<Accordion title="/usr - User programs and data">
+  Contains user-installed applications, libraries, and documentation.
+  
+  ```bash
+  ls /usr/bin  # User commands
+  ls /usr/lib  # Libraries
+  ```
+</Accordion>
+
+<Accordion title="/var - Variable data files">
+  Logs, caches, and other files that change during system operation.
+  
+  ```bash
+  ls /var/log    # System logs
+  ls /var/cache  # Package cache
+  ```
+</Accordion>
+
+<Info>
+In iSH, you're always running as the root user. The entire Linux environment runs within iOS's sandbox, so you have full permissions within the iSH filesystem.
+</Info>
+
+## Running your first commands
+
+Let's put everything together with some practical examples:
+
+### Create a simple Python script
+
+```bash
+# Make sure Python is installed
+apk add python3
+
+# Create a script
+cat > hello.py << 'EOF'
+#!/usr/bin/env python3
+
+import sys
+import platform
+
+print(f"Hello from iSH!")
+print(f"Python version: {sys.version}")
+print(f"Platform: {platform.system()} {platform.machine()}")
+EOF
+
+# Make it executable
+chmod +x hello.py
+
+# Run it
+python3 hello.py
+```
+
+### Download and extract a file
+
+```bash
+# Install wget if not already installed
+apk add wget
+
+# Download a file
+wget https://example.com/archive.tar.gz
+
+# Extract it
+tar -xzf archive.tar.gz
+
+# List contents
+ls -la
+```
+
+### Create and run a shell script
+
+```bash
+# Create a shell script
+cat > system-info.sh << 'EOF'
+#!/bin/sh
+
+echo "=== System Information ==="
+echo "Hostname: $(hostname)"
+echo "Kernel: $(uname -r)"
+echo "Alpine version: $(cat /etc/alpine-release)"
+echo "Uptime: $(uptime)"
+echo "Disk usage:"
+df -h /
+echo "Memory usage:"
+free -m
+EOF
+
+# Make it executable
+chmod +x system-info.sh
+
+# Run it
+./system-info.sh
+```
+
+### Set up a simple web server
+
+```bash
+# Install Python's HTTP server (Python 3 is usually installed)
+apk add python3
+
+# Create some HTML content
+mkdir -p ~/public_html
+cd ~/public_html
+
+cat > index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>iSH Web Server</title>
+</head>
+<body>
+    <h1>Hello from iSH!</h1>
+    <p>This page is served from a Linux environment running on iOS.</p>
+</body>
+</html>
+EOF
+
+# Start the web server on port 8080
+python3 -m http.server 8080
+
+# Access it at http://localhost:8080 in a browser
+# Press Ctrl+C to stop the server
+```
+
+<Note>
+To access web servers running in iSH from Safari or other browsers on your iOS device, use `localhost` or `127.0.0.1` followed by the port number.
+</Note>
+
+## Common workflows
+
+Here are some practical workflows you can implement in iSH:
+
+### Automating tasks with cron
+
+```bash
+# Install cronie (cron implementation)
+apk add cronie
+
+# Start the cron daemon
+crond
+
+# Edit your crontab
+crontab -e
+
+# Example: Run a script every hour
+# Add this line:
+# 0 * * * * /root/myscript.sh
+
+# List your cron jobs
+crontab -l
+```
+
+### Working with SSH
+
+```bash
+# Install SSH client
+apk add openssh-client
+
+# Connect to a remote server
+ssh user@hostname
+
+# Generate SSH keys
+ssh-keygen -t rsa -b 4096
+
+# Copy your public key to a server
+ssh-copy-id user@hostname
+
+# Use SCP to copy files
+scp localfile.txt user@hostname:/remote/path/
+```
+
+### Managing your dotfiles
+
+```bash
+# Install git
+apk add git
+
+# Clone your dotfiles repository
+cd ~
+git clone https://github.com/yourusername/dotfiles.git
+
+# Create symbolic links
+ln -s ~/dotfiles/.bashrc ~/.bashrc
+ln -s ~/dotfiles/.vimrc ~/.vimrc
+
+# Source your new bash configuration
+source ~/.bashrc
+```
+
+## Tips and tricks
+
+<CardGroup cols={2}>
+  <Card title="Use tab completion" icon="keyboard">
+    Press Tab to auto-complete commands, file names, and paths. Press Tab twice to see all available completions.
+  </Card>
+  
+  <Card title="Command history" icon="clock-rotate-left">
+    Use the up/down arrow keys to navigate through previous commands. Press Ctrl+R to search command history.
+  </Card>
+  
+  <Card title="Clear the screen" icon="broom">
+    Type `clear` or press Ctrl+L to clear the terminal screen while keeping your session active.
+  </Card>
+  
+  <Card title="Stop running commands" icon="stop">
+    Press Ctrl+C to interrupt a running command. Press Ctrl+Z to suspend it (resume with `fg`).
+  </Card>
+</CardGroup>
+
+### Useful shell shortcuts
+
+```bash
+# Command history
+history          # Show command history
+!123             # Run command number 123 from history
+!!               # Run the last command again
+!$               # Use the last argument from previous command
+
+# Navigate faster
+Ctrl+A          # Move to beginning of line
+Ctrl+E          # Move to end of line
+Ctrl+U          # Delete from cursor to beginning
+Ctrl+K          # Delete from cursor to end
+Ctrl+W          # Delete word before cursor
+
+# Job control
+Ctrl+C          # Kill current process
+Ctrl+Z          # Suspend current process
+fg              # Bring suspended process to foreground
+bg              # Continue suspended process in background
+jobs            # List background jobs
+```
+
+## Performance considerations
+
+iSH uses x86 emulation, which has performance implications:
+
+<Warning>
+Compute-intensive tasks (compilation, video processing, heavy computation) will be significantly slower than on native Linux due to emulation overhead.
+</Warning>
+
+**Best practices for performance:**
+
+- Prefer interpreted languages (Python, JavaScript) over compiled workflows when possible
+- Use Alpine packages instead of building from source
+- Avoid running resource-intensive processes
+- Close unused background processes
+- Regularly clean package cache: `apk cache clean`
+
+## Troubleshooting common issues
+
+<Accordion title="Package installation fails">
+  ```bash
+  # Update package indices first
+  apk update
+  
+  # Try again with verbose output
+  apk add --verbose package-name
+  
+  # Check repository configuration
+  cat /etc/apk/repositories
+  
+  # Ensure network connectivity
+  ping -c 3 dl-cdn.alpinelinux.org
+  ```
+</Accordion>
+
+<Accordion title="Command not found">
+  ```bash
+  # Search for the package providing the command
+  apk search cmd:command-name
+  
+  # Or search online: https://pkgs.alpinelinux.org
+  
+  # Install the package
+  apk add package-name
+  ```
+</Accordion>
+
+<Accordion title="Permission denied errors">
+  In iSH, you're already root, so permission issues usually relate to file modes:
+  
+  ```bash
+  # Make a file executable
+  chmod +x filename.sh
+  
+  # Check file permissions
+  ls -la filename
+  
+  # Change ownership (though usually not needed)
+  chown root:root filename
+  ```
+</Accordion>
+
+<Accordion title="Out of storage space">
+  ```bash
+  # Check disk usage
+  df -h
+  
+  # Find large directories
+  du -sh /* | sort -h
+  
+  # Clean package cache
+  apk cache clean
+  
+  # Remove unused packages
+  apk del package-name
+  
+  # Clean temporary files
+  rm -rf /tmp/*
+  ```
 </Accordion>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
+Now that you're comfortable with the basics:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Architecture Overview" icon="sitemap" href="/architecture/overview">
+    Learn how iSH works under the hood
+  </Card>
+  
+  <Card title="File System" icon="folder-open" href="/architecture/filesystem">
+    Understand how iSH integrates with iOS and the Files app
+  </Card>
+  
+  <Card title="Building iSH" icon="hammer" href="/building/ios">
+    Build iSH from source for development
+  </Card>
+  
+  <Card title="Advanced Topics" icon="gears" href="/advanced/interpreter">
+    Explore advanced debugging and internals
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Learning resources
+
+Continue your iSH journey with these resources:
+
+- **Alpine Linux Documentation**: [docs.alpinelinux.org](https://docs.alpinelinux.org)
+- **Alpine Package Search**: [pkgs.alpinelinux.org](https://pkgs.alpinelinux.org)
+- **iSH Wiki**: [github.com/ish-app/ish/wiki](https://github.com/ish-app/ish/wiki)
+- **iSH Discord**: Active community for questions and support
+- **Linux Command Reference**: Learn Unix/Linux fundamentals
+
+<Tip>
+The best way to learn is by doing. Experiment with commands, install different packages, and don't be afraid to break things—you can always reinstall iSH to start fresh!
+</Tip>

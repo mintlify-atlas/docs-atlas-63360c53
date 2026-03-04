@@ -1,0 +1,381 @@
+---
+title: "Process Management"
+description: "System calls for process lifecycle, execution, and task management"
+---
+
+## Process Lifecycle
+
+These syscalls control process creation, execution, and termination.
+
+### sys_clone
+
+Create a new process or thread with fine-grained control over resource sharing.
+
+```c
+dword_t sys_clone(dword_t flags, addr_t stack, addr_t ptid, addr_t tls, addr_t ctid)
+```
+
+<ParamField path="flags" type="dword_t">
+  Bitmask controlling what resources are shared between parent and child:
+  - `CLONE_VM` (0x100): Share memory space
+  - `CLONE_FS` (0x200): Share filesystem information
+  - `CLONE_FILES` (0x400): Share file descriptor table
+  - `CLONE_SIGHAND` (0x800): Share signal handlers
+  - `CLONE_THREAD` (0x10000): Create thread in same thread group
+  - `CLONE_VFORK` (0x4000): Suspend parent until child exits or execs
+  - `CLONE_SETTLS` (0x80000): Set thread-local storage
+  - `CLONE_PARENT_SETTID` (0x100000): Store child TID at ptid
+  - `CLONE_CHILD_CLEARTID` (0x200000): Clear and futex-wake ctid on exit
+</ParamField>
+
+<ParamField path="stack" type="addr_t">
+  Stack pointer for new process/thread. If 0, uses parent's stack.
+</ParamField>
+
+<ParamField path="ptid" type="addr_t">
+  Address to store parent TID (when CLONE_PARENT_SETTID is set).
+</ParamField>
+
+<ParamField path="tls" type="addr_t">
+  Thread-local storage descriptor (when CLONE_SETTLS is set).
+</ParamField>
+
+<ParamField path="ctid" type="addr_t">
+  Address for child TID operations (CLONE_CHILD_SETTID/CLEARTID).
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  On success, returns child process ID in parent, 0 in child. On error, returns negative errno.
+</ResponseField>
+
+**Error Codes:**
+- `ENOMEM` (-12): Insufficient memory
+- `EINVAL` (-22): Invalid flags combination
+
+**Source:** kernel/fork.c:56
+
+---
+
+### sys_fork
+
+Create a child process with copy-on-write memory.
+
+```c
+dword_t sys_fork(void)
+```
+
+<ResponseField name="return" type="dword_t">
+  Returns child PID in parent process, 0 in child process. On error, returns negative errno.
+</ResponseField>
+
+**Description:**
+Creates a complete copy of the calling process with separate memory space (copy-on-write), file descriptors, and signal handlers.
+
+**Source:** kernel/fork.c
+
+---
+
+### sys_vfork
+
+Create a child process that shares memory with parent until exec.
+
+```c
+dword_t sys_vfork(void)
+```
+
+<ResponseField name="return" type="dword_t">
+  Returns child PID in parent, 0 in child. On error, returns negative errno.
+</ResponseField>
+
+**Description:**
+Similar to fork but suspends parent until child calls execve or exits. Child runs in parent's memory space.
+
+**Source:** kernel/fork.c
+
+---
+
+### sys_execve
+
+Replace current process image with a new program.
+
+```c
+dword_t sys_execve(addr_t file, addr_t argv, addr_t envp)
+```
+
+<ParamField path="file" type="addr_t">
+  Address of null-terminated path to executable file.
+</ParamField>
+
+<ParamField path="argv" type="addr_t">
+  Address of array of argument string pointers, terminated by NULL.
+</ParamField>
+
+<ParamField path="envp" type="addr_t">
+  Address of array of environment string pointers, terminated by NULL.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Does not return on success. On error, returns negative errno.
+</ResponseField>
+
+**Error Codes:**
+- `ENOENT` (-2): File not found
+- `EACCES` (-13): Permission denied
+- `ENOEXEC` (-8): Invalid executable format
+- `E2BIG` (-7): Argument list too long
+- `EFAULT` (-14): Bad address
+
+**Source:** kernel/exec.c:38
+
+---
+
+### sys_exit
+
+Terminate the calling thread.
+
+```c
+dword_t sys_exit(dword_t status)
+```
+
+<ParamField path="status" type="dword_t">
+  Exit status code to return to parent process.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Does not return.
+</ResponseField>
+
+**Description:**
+Terminates the calling thread and releases its resources. Exit status is made available to parent via wait.
+
+**Source:** kernel/exit.c:44
+
+---
+
+### sys_exit_group
+
+Terminate all threads in the calling process.
+
+```c
+dword_t sys_exit_group(dword_t status)
+```
+
+<ParamField path="status" type="dword_t">
+  Exit status for the entire process group.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Does not return.
+</ResponseField>
+
+**Description:**
+Terminates all threads in the process and returns the exit status to the parent.
+
+**Source:** kernel/exit.c:42
+
+---
+
+## Process Waiting
+
+Syscalls for waiting on child process state changes.
+
+### sys_wait4
+
+Wait for process state change and collect resource usage.
+
+```c
+dword_t sys_wait4(pid_t_ pid, addr_t status_addr, dword_t options, addr_t rusage_addr)
+```
+
+<ParamField path="pid" type="pid_t_">
+  Process ID to wait for:
+  - `< -1`: Wait for any child in process group |pid|
+  - `-1`: Wait for any child process
+  - `0`: Wait for any child in same process group
+  - `> 0`: Wait for specific child with this PID
+</ParamField>
+
+<ParamField path="status_addr" type="addr_t">
+  Address to store exit status. Can be 0 to ignore.
+</ParamField>
+
+<ParamField path="options" type="dword_t">
+  Wait options:
+  - `WNOHANG`: Return immediately if no child has exited
+  - `WUNTRACED`: Also return for stopped children
+  - `WCONTINUED`: Also return for continued children
+</ParamField>
+
+<ParamField path="rusage_addr" type="addr_t">
+  Address to store resource usage information. Can be 0 to ignore.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns PID of child that changed state, 0 if WNOHANG and no change, or negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `ECHILD` (-10): No child processes
+- `EINVAL` (-22): Invalid options
+- `EINTR` (-4): Interrupted by signal
+
+**Source:** kernel/calls.h:44
+
+---
+
+### sys_waitid
+
+Wait for process state change with extended information.
+
+```c
+dword_t sys_waitid(int_t idtype, pid_t_ id, addr_t info_addr, int_t options)
+```
+
+<ParamField path="idtype" type="int_t">
+  Type of ID:
+  - `P_PID`: Wait for specific process
+  - `P_PGID`: Wait for any process in process group
+  - `P_ALL`: Wait for any child (id ignored)
+</ParamField>
+
+<ParamField path="id" type="pid_t_">
+  Process or process group ID to wait for.
+</ParamField>
+
+<ParamField path="info_addr" type="addr_t">
+  Address to store siginfo_t structure with detailed information.
+</ParamField>
+
+<ParamField path="options" type="int_t">
+  Same options as wait4.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:45
+
+---
+
+### sys_waitpid
+
+Simplified wait for specific process.
+
+```c
+dword_t sys_waitpid(pid_t_ pid, addr_t status_addr, dword_t options)
+```
+
+<ParamField path="pid" type="pid_t_">
+  Process ID to wait for (same semantics as wait4).
+</ParamField>
+
+<ParamField path="status_addr" type="addr_t">
+  Address to store exit status.
+</ParamField>
+
+<ParamField path="options" type="dword_t">
+  Wait options (same as wait4).
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns PID of child that changed state or negative errno.
+</ResponseField>
+
+**Source:** kernel/calls.h:46
+
+---
+
+## Process Identification
+
+Syscalls for querying process and group IDs.
+
+### sys_getpid
+
+Get process ID.
+
+```c
+pid_t_ sys_getpid(void)
+```
+
+<ResponseField name="return" type="pid_t_">
+  Returns the process ID of the calling process. Always succeeds.
+</ResponseField>
+
+**Source:** kernel/calls.h:201
+
+---
+
+### sys_gettid
+
+Get thread ID.
+
+```c
+pid_t_ sys_gettid(void)
+```
+
+<ResponseField name="return" type="pid_t_">
+  Returns the thread ID of the calling thread. Always succeeds.
+</ResponseField>
+
+**Source:** kernel/calls.h:202
+
+---
+
+### sys_getppid
+
+Get parent process ID.
+
+```c
+pid_t_ sys_getppid(void)
+```
+
+<ResponseField name="return" type="pid_t_">
+  Returns the process ID of the parent process. Always succeeds.
+</ResponseField>
+
+**Source:** kernel/calls.h:203
+
+---
+
+### sys_getpgid
+
+Get process group ID.
+
+```c
+pid_t_ sys_getpgid(pid_t_ pid)
+```
+
+<ParamField path="pid" type="pid_t_">
+  Process ID to query. 0 means calling process.
+</ParamField>
+
+<ResponseField name="return" type="pid_t_">
+  Returns process group ID on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:204
+
+---
+
+### sys_setpgid
+
+Set process group ID.
+
+```c
+dword_t sys_setpgid(pid_t_ pid, pid_t_ pgid)
+```
+
+<ParamField path="pid" type="pid_t_">
+  Process ID to modify. 0 means calling process.
+</ParamField>
+
+<ParamField path="pgid" type="pid_t_">
+  New process group ID. 0 means use pid as pgid.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:205

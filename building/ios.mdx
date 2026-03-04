@@ -1,0 +1,220 @@
+---
+title: Building for iOS
+description: Build and run iSH on iOS devices and simulators
+---
+
+iSH can be built as an iOS app for both physical devices and the iOS Simulator using Xcode.
+
+## Prerequisites
+
+Before building for iOS, ensure you have:
+
+- **macOS** with **Xcode** installed (latest version recommended)
+- **Apple Developer Account** (for device deployment)
+- All [build requirements](/building/requirements) installed
+- Git with submodules initialized
+
+## Getting the Source Code
+
+<Steps>
+  <Step title="Clone the repository with submodules">
+    iSH uses git submodules for dependencies. You must clone with `--recurse-submodules`:
+    
+    ```bash
+    git clone --recurse-submodules https://github.com/ish-app/ish.git
+    cd ish
+    ```
+    
+    If you already cloned without submodules:
+    
+    ```bash
+    git submodule update --init
+    ```
+  </Step>
+</Steps>
+
+## Configuring the Project
+
+<Steps>
+  <Step title="Open iSH.xcconfig">
+    Navigate to the `app/` directory and open `iSH.xcconfig` in a text editor.
+  </Step>
+
+  <Step title="Set ROOT_BUNDLE_IDENTIFIER">
+    Change `ROOT_BUNDLE_IDENTIFIER` to something unique. This will be used for all bundle identifiers and app groups.
+    
+    ```bash app/iSH.xcconfig
+    ROOT_BUNDLE_IDENTIFIER = com.yourcompany.ish
+    ```
+    
+    <Note>
+      The default value is `app.ish.iSH`. You must change this to avoid conflicts with the official App Store build.
+    </Note>
+  </Step>
+
+  <Step title="Configure Development Team (Option 1: Xcode)">
+    The easiest way to set your development team:
+    
+    1. Open `iSH.xcodeproj` in Xcode
+    2. Select the **project** (not target) in the navigator
+    3. Go to the **Build Settings** tab
+    4. Search for "Development Team"
+    5. Set your team ID in the **project** build settings
+    
+    <Warning>
+      Make sure to set this in the **project** build settings, not the target build settings.
+    </Warning>
+  </Step>
+
+  <Step title="Configure Development Team (Option 2: iSH.xcconfig)">
+    Alternatively, you can set the development team in `iSH.xcconfig` to reduce merge conflicts:
+    
+    ```bash app/iSH.xcconfig
+    DEVELOPMENT_TEAM = YOUR_TEAM_ID
+    ```
+    
+    Find your Team ID in Xcode under **Preferences > Accounts > [Your Apple ID] > Manage Certificates**.
+  </Step>
+</Steps>
+
+## Building and Running
+
+<Steps>
+  <Step title="Open the project in Xcode">
+    ```bash
+    open iSH.xcodeproj
+    ```
+  </Step>
+
+  <Step title="Select a target device or simulator">
+    Choose your target from the scheme selector:
+    - iOS Simulator (for testing)
+    - Your connected iOS device (for device deployment)
+  </Step>
+
+  <Step title="Build and run">
+    Click the **Run** button (▶️) or press **Cmd+R**.
+    
+    Xcode will:
+    - Run build scripts automatically
+    - Compile the project
+    - Install the app on your device/simulator
+    - Launch the app
+  </Step>
+</Steps>
+
+## Optional Configuration
+
+### Enabling Logging
+
+To enable debug logging channels, edit `iSH.xcconfig`:
+
+```bash app/iSH.xcconfig
+ISH_LOG = verbose strace
+```
+
+Available logging channels:
+- **strace**: Logs system call parameters and return values
+- **instr**: Logs every instruction (very slow)
+- **verbose**: General debug logs
+
+See [debugging documentation](/advanced/debugging) for more details.
+
+### Custom Root Filesystem
+
+The default root filesystem URL is configured in `iSH.xcconfig`:
+
+```bash app/iSH.xcconfig
+ROOTFS_URL = github.com/ish-app/roots/releases/download/.../appstore-apk.tar.gz
+```
+
+You can change this to use a different Alpine root filesystem.
+
+## Project Structure
+
+Key files in the iOS build:
+
+- **iSH.xcodeproj**: Main Xcode project file
+- **app/iSH.xcconfig**: Main configuration file
+- **app/iOS.xcconfig**: iOS-specific settings
+- **app/Project.xcconfig**: Project-level settings
+- **app/App.xcconfig**: App target settings
+
+## Troubleshooting
+
+### Code Signing Issues
+
+**Problem:** "Failed to register bundle identifier" or code signing errors.
+
+**Solution:**
+1. Ensure `ROOT_BUNDLE_IDENTIFIER` is unique and doesn't conflict with existing apps
+2. Verify your Development Team is set correctly
+3. Check that your Apple Developer account has necessary permissions
+4. Try cleaning the build folder (**Product > Clean Build Folder**)
+
+### Missing Submodules
+
+**Problem:** Build fails with missing files or "No such file or directory" errors.
+
+**Solution:**
+```bash
+git submodule update --init --recursive
+```
+
+### Build Script Failures
+
+**Problem:** Xcode build scripts fail.
+
+**Solution:**
+1. Ensure all [build requirements](/building/requirements) are installed
+2. Check that `meson` and `ninja` are in your PATH
+3. Look at the build log for specific errors
+4. Try cleaning the build folder and rebuilding
+
+### Simulator vs Device Builds
+
+**Problem:** App works in simulator but not on device.
+
+**Solution:**
+- Ensure your device is registered with your Apple Developer account
+- Check that provisioning profiles are correctly configured
+- Some debugging features (like ptraceomatic) only work on specific platforms
+
+### Linking Errors
+
+**Problem:** Undefined symbols or linking errors.
+
+**Solution:**
+1. Make sure all dependencies in `deps/` are properly initialized
+2. Clean build folder and rebuild
+3. Check that you're using a compatible Xcode version
+4. Verify Clang and LLD are properly installed
+
+## Development Workflow
+
+### Making Changes
+
+1. Make your code changes
+2. Build and run in Xcode
+3. Test in simulator or on device
+4. Check logs in Xcode Console
+
+### Debugging
+
+- Use Xcode's debugger with breakpoints
+- Enable logging channels in `iSH.xcconfig`
+- Check Console app for NSLog output
+- Use Instruments for performance profiling
+
+### Testing Changes
+
+For quick iteration:
+1. Use the iOS Simulator for faster builds
+2. Enable relevant logging channels
+3. Test on physical device before release
+
+## Next Steps
+
+- [Build the CLI tool](/building/cli) for faster testing
+- [Learn about debugging](/advanced/debugging) for troubleshooting
+- [Contribute to iSH](https://github.com/ish-app/ish/blob/master/CONTRIBUTING.md)

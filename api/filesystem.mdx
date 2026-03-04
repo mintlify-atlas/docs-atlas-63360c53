@@ -1,0 +1,539 @@
+---
+title: "Filesystem API"
+description: "File operations, mount management, and inode handling"
+---
+
+The filesystem API provides file descriptor management, mount operations, path resolution, and filesystem abstraction layers.
+
+## File Descriptors
+
+### FD Structure
+
+The `fd` structure represents an open file, socket, device, or other I/O resource.
+
+```c fs/fd.h:14-109
+struct fd {
+    atomic_uint refcount;       // Reference count
+    unsigned flags;             // File flags (O_RDWR, O_NONBLOCK, etc.)
+    mode_t_ type;               // File type (S_IFMT part only)
+    const struct fd_ops *ops;   // Operations table
+    struct list poll_fds;       // Poll/select tracking
+    lock_t poll_lock;           // Poll lock
+    unsigned long offset;       // Current file position
+
+    // Type-specific data
+    union {
+        struct { struct tty *tty; } tty;
+        struct { struct poll *poll; } epollfd;
+        struct { uint64_t val; } eventfd;
+        struct { struct timer *timer; uint64_t expirations; } timerfd;
+        struct {
+            int domain, type, protocol;
+            char unix_name[108];
+            struct fd *unix_peer;
+            // ...
+        } socket;
+        void *data;
+    };
+
+    // Filesystem data
+    struct mount *mount;        // Associated mount point
+    int real_fd;                // Host OS file descriptor
+    DIR *dir;                   // Directory stream
+    struct inode_data *inode;   // Inode data
+    ino_t fake_inode;           // Fake inode number
+    struct statbuf stat;        // File stat information
+
+    lock_t lock;                // General lock
+    cond_t cond;                // Condition variable
+};
+```
+
+### FD Operations
+
+```c fs/fd.h:131-169
+struct fd_ops {
+    ssize_t (*read)(struct fd *fd, void *buf, size_t bufsize);
+    ssize_t (*write)(struct fd *fd, const void *buf, size_t bufsize);
+    ssize_t (*pread)(struct fd *fd, void *buf, size_t bufsize, off_t off);
+    ssize_t (*pwrite)(struct fd *fd, const void *buf, size_t bufsize, off_t off);
+    off_t_ (*lseek)(struct fd *fd, off_t_ off, int whence);
+
+    int (*readdir)(struct fd *fd, struct dir_entry *entry);
+    unsigned long (*telldir)(struct fd *fd);
+    void (*seekdir)(struct fd *fd, unsigned long ptr);
+
+    int (*mmap)(struct fd *fd, struct mem *mem, page_t start, pages_t pages, off_t offset, int prot, int flags);
+    int (*poll)(struct fd *fd);
+
+    ssize_t (*ioctl_size)(int cmd);
+    int (*ioctl)(struct fd *fd, int cmd, void *arg);
+
+    int (*fsync)(struct fd *fd);
+    int (*close)(struct fd *fd);
+
+    int (*getflags)(struct fd *fd);
+    int (*setflags)(struct fd *fd, dword_t arg);
+};
+```
+
+### FD Management Functions
+
+```c fs/fd.h:114-119
+struct fd *fd_create(const struct fd_ops *ops);
+struct fd *fd_retain(struct fd *fd);
+int fd_close(struct fd *fd);
+int fd_getflags(struct fd *fd);
+int fd_setflags(struct fd *fd, int flags);
+```
+
+<ParamField path="fd_create" type="struct fd *">
+  Creates a new file descriptor with the given operations table
+</ParamField>
+
+<ParamField path="fd_retain" type="struct fd *">
+  Increments reference count and returns the fd
+</ParamField>
+
+<ParamField path="fd_close" type="int">
+  Decrements reference count and frees if zero. Returns 0 on success.
+</ParamField>
+
+**Example:**
+
+```c
+// Create a new file descriptor
+struct fd *fd = fd_create(&my_fd_ops);
+fd->flags = O_RDWR_;
+fd->type = S_IFREG;
+
+// Use the fd
+fd_retain(fd);
+
+// Close when done
+fd_close(fd);
+```
+
+### Directory Entry
+
+```c fs/fd.h:122-125
+struct dir_entry {
+    qword_t inode;              // Inode number
+    char name[NAME_MAX + 1];    // Filename (NAME_MAX = 255)
+};
+```
+
+## File Descriptor Table
+
+The `fdtable` manages all open file descriptors for a process.
+
+```c fs/fd.h:171-177
+struct fdtable {
+    atomic_uint refcount;       // Reference count
+    unsigned size;              // Table size
+    struct fd **files;          // Array of fd pointers
+    bits_t *cloexec;            // Close-on-exec flags
+    lock_t lock;                // Table lock
+};
+```
+
+### FD Table Functions
+
+```c fs/fd.h:179-191
+struct fdtable *fdtable_new(int size);
+void fdtable_release(struct fdtable *table);
+struct fdtable *fdtable_copy(struct fdtable *table);
+void fdtable_free(struct fdtable *table);
+void fdtable_do_cloexec(struct fdtable *table);
+struct fd *fdtable_get(struct fdtable *table, fd_t f);
+
+struct fd *f_get(fd_t f);
+fd_t f_install(struct fd *fd, int flags);
+int f_close(fd_t f);
+```
+
+<ParamField path="fdtable_new" type="struct fdtable *">
+  Creates a new fd table with specified size
+</ParamField>
+
+<ParamField path="fdtable_copy" type="struct fdtable *">
+  Creates a copy of the fd table (for fork)
+</ParamField>
+
+<ParamField path="fdtable_do_cloexec" type="void">
+  Closes all fds with close-on-exec flag set
+</ParamField>
+
+<ParamField path="f_get" type="struct fd *">
+  Gets fd from current task's fd table
+</ParamField>
+
+<ParamField path="f_install" type="fd_t">
+  Installs fd into current task's fd table. Returns fd number or error.
+</ParamField>
+
+**Example:**
+
+```c
+// Create fd table for new process
+struct fdtable *table = fdtable_new(256);
+
+// Install a file descriptor
+struct fd *fd = fd_create(&realfs_fdops);
+fd_t fd_num = f_install(fd, O_CLOEXEC_);
+if (fd_num < 0) {
+    // Error
+}
+
+// Get fd from current process
+struct fd *my_fd = f_get(fd_num);
+
+// Close fd
+f_close(fd_num);
+```
+
+## Mount Operations
+
+The mount system manages filesystem mount points.
+
+### Mount Structure
+
+Each mounted filesystem is represented by a mount structure:
+
+```c
+struct mount {
+    const char *point;          // Mount point path
+    const char *source;         // Source device/path
+    const char *info;           // Mount options
+    int flags;                  // Mount flags (MS_READONLY_, etc.)
+    const struct fs_ops *fs;    // Filesystem operations
+    void *data;                 // Filesystem-specific data
+    unsigned refcount;          // Reference count
+    struct list mounts;         // Mount list link
+};
+```
+
+### Mount Functions
+
+```c fs/mount.c:27-37
+struct mount *mount_find(char *path);
+void mount_retain(struct mount *mount);
+void mount_release(struct mount *mount);
+```
+
+<ParamField path="mount_find" type="struct mount *">
+  Finds the mount point for a given path. Path must be normalized.
+</ParamField>
+
+<ParamField path="mount_retain" type="void">
+  Increments mount reference count
+</ParamField>
+
+<ParamField path="mount_release" type="void">
+  Decrements mount reference count
+</ParamField>
+
+```c fs/mount.c:53-85
+int do_mount(const struct fs_ops *fs, const char *source, 
+             const char *point, const char *info, int flags);
+int mount_remove(struct mount *mount);
+int do_umount(const char *point);
+```
+
+<ParamField path="do_mount" type="int">
+  Mounts a filesystem at the specified mount point. Returns 0 on success.
+</ParamField>
+
+<ParamField path="do_umount" type="int">
+  Unmounts filesystem at the given path. Returns 0 on success or -EBUSY.
+</ParamField>
+
+**Example:**
+
+```c
+#include "fs/real.h"
+
+// Mount a real filesystem
+int err = do_mount(&realfs, "/path/to/source", "/mnt", "", 0);
+if (err < 0) {
+    return err;
+}
+
+// Use the mounted filesystem
+char path[] = "/mnt/file.txt";
+struct mount *mount = mount_find(path);
+// ... use mount ...
+mount_release(mount);
+
+// Unmount when done
+do_umount("/mnt");
+```
+
+## Path Resolution
+
+Path resolution converts user paths to normalized absolute paths.
+
+### Path Normalization
+
+```c fs/path.c:5-95
+int path_normalize(const char *at_path, const char *path, char *out, int flags);
+```
+
+<ParamField path="at_path" type="const char *">
+  Base path for relative paths, or NULL for current directory
+</ParamField>
+
+<ParamField path="path" type="const char *">
+  Path to normalize (can be relative or absolute)
+</ParamField>
+
+<ParamField path="out" type="char *">
+  Output buffer for normalized path (must be MAX_PATH bytes)
+</ParamField>
+
+<ParamField path="flags" type="int">
+  Flags controlling symlink following (N_SYMLINK_FOLLOW or N_SYMLINK_NOFOLLOW)
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Returns 0 on success, negative error code on failure
+</ResponseField>
+
+**Normalization features:**
+- Resolves `.` and `..` components
+- Converts relative to absolute paths
+- Follows symbolic links (if N_SYMLINK_FOLLOW)
+- Handles mount point boundaries
+- Detects symlink loops (max 5 levels)
+
+**Example:**
+
+```c
+char normalized[MAX_PATH];
+int err = path_normalize("/home/user", "../file.txt", 
+                         normalized, N_SYMLINK_FOLLOW);
+if (err < 0) {
+    return err;
+}
+// normalized now contains "/home/file.txt"
+```
+
+## Fake Filesystem Database
+
+The fake filesystem uses SQLite to store metadata for files.
+
+### Database Structure
+
+```c fs/fake-db.h:8-28
+struct fakefs_db {
+    sqlite3 *db;                // SQLite database handle
+    struct {
+        sqlite3_stmt *begin_deferred;
+        sqlite3_stmt *begin_immediate;
+        sqlite3_stmt *commit;
+        sqlite3_stmt *rollback;
+        sqlite3_stmt *path_get_inode;
+        sqlite3_stmt *path_read_stat;
+        sqlite3_stmt *path_create_stat;
+        sqlite3_stmt *path_create_path;
+        sqlite3_stmt *inode_read_stat;
+        sqlite3_stmt *inode_write_stat;
+        sqlite3_stmt *path_link;
+        sqlite3_stmt *path_unlink;
+        sqlite3_stmt *path_rename;
+        sqlite3_stmt *path_from_inode;
+        sqlite3_stmt *try_cleanup_inode;
+    } stmt;                     // Prepared statements
+    sqlite3_mutex *lock;        // Database lock
+};
+```
+
+### Stat Structure
+
+```c fs/fake-db.h:42-47
+struct ish_stat {
+    uint32_t mode;              // File mode and permissions
+    uint32_t uid;               // Owner user ID
+    uint32_t gid;               // Owner group ID
+    uint32_t rdev;              // Device ID (for special files)
+};
+```
+
+### Database Initialization
+
+```c fs/fake-db.h:30-31
+int fake_db_init(struct fakefs_db *fs, const char *db_path, int root_fd);
+int fake_db_deinit(struct fakefs_db *fs);
+```
+
+<ParamField path="fake_db_init" type="int">
+  Initializes the fake filesystem database. Returns 0 on success.
+</ParamField>
+
+<ParamField path="db_path" type="const char *">
+  Path to SQLite database file
+</ParamField>
+
+<ParamField path="root_fd" type="int">
+  File descriptor of the root directory
+</ParamField>
+
+### Transaction Management
+
+```c fs/fake-db.h:33-36
+void db_begin_read(struct fakefs_db *fs);
+void db_begin_write(struct fakefs_db *fs);
+void db_commit(struct fakefs_db *fs);
+void db_rollback(struct fakefs_db *fs);
+```
+
+<ParamField path="db_begin_read" type="void">
+  Begins a read transaction (deferred lock)
+</ParamField>
+
+<ParamField path="db_begin_write" type="void">
+  Begins a write transaction (immediate lock)
+</ParamField>
+
+**Example:**
+
+```c
+struct fakefs_db db;
+fake_db_init(&db, "/path/to/meta.db", root_fd);
+
+// Read transaction
+db_begin_read(&db);
+inode_t ino = path_get_inode(&db, "/home/user/file.txt");
+db_commit(&db);
+
+// Write transaction
+db_begin_write(&db);
+struct ish_stat stat = { .mode = 0644, .uid = 1000, .gid = 1000 };
+inode_t new_ino = path_create(&db, "/tmp/newfile", &stat);
+db_commit(&db);
+```
+
+### Path Operations
+
+```c fs/fake-db.h:51-53
+inode_t path_get_inode(struct fakefs_db *fs, const char *path);
+bool path_read_stat(struct fakefs_db *fs, const char *path, struct ish_stat *stat, uint64_t *inode);
+inode_t path_create(struct fakefs_db *fs, const char *path, struct ish_stat *stat);
+```
+
+<ParamField path="path_get_inode" type="inode_t">
+  Gets inode number for path. Returns 0 if not found.
+</ParamField>
+
+<ParamField path="path_read_stat" type="bool">
+  Reads file stat for path. Returns true if found.
+</ParamField>
+
+<ParamField path="path_create" type="inode_t">
+  Creates new file at path. Returns new inode number.
+</ParamField>
+
+### Inode Operations
+
+```c fs/fake-db.h:55-57
+bool inode_read_stat_if_exist(struct fakefs_db *fs, inode_t inode, struct ish_stat *stat);
+void inode_read_stat_or_die(struct fakefs_db *fs, inode_t inode, struct ish_stat *stat);
+void inode_write_stat(struct fakefs_db *fs, inode_t inode, struct ish_stat *stat);
+```
+
+<ParamField path="inode_read_stat_if_exist" type="bool">
+  Reads inode stat. Returns false if inode doesn't exist.
+</ParamField>
+
+<ParamField path="inode_read_stat_or_die" type="void">
+  Reads inode stat. Aborts if inode doesn't exist.
+</ParamField>
+
+<ParamField path="inode_write_stat" type="void">
+  Updates inode stat in database
+</ParamField>
+
+### Link Operations
+
+```c fs/fake-db.h:59-61
+void path_link(struct fakefs_db *fs, const char *src, const char *dst);
+inode_t path_unlink(struct fakefs_db *fs, const char *path);
+void path_rename(struct fakefs_db *fs, const char *src, const char *dst);
+```
+
+<ParamField path="path_link" type="void">
+  Creates hard link from src to dst
+</ParamField>
+
+<ParamField path="path_unlink" type="inode_t">
+  Removes path. Returns inode number of unlinked file.
+</ParamField>
+
+<ParamField path="path_rename" type="void">
+  Renames/moves file from src to dst
+</ParamField>
+
+**Example:**
+
+```c
+db_begin_write(&db);
+
+// Create hard link
+path_link(&db, "/home/user/original", "/home/user/link");
+
+// Rename file
+path_rename(&db, "/tmp/old", "/tmp/new");
+
+// Delete file
+inode_t ino = path_unlink(&db, "/tmp/deleteme");
+
+db_commit(&db);
+```
+
+## Filesystem Operations Table
+
+Each filesystem type implements the `fs_ops` structure:
+
+```c
+struct fs_ops {
+    int (*mount)(struct mount *mount);
+    int (*umount)(struct mount *mount);
+    
+    int (*stat)(struct mount *mount, const char *path, struct statbuf *stat);
+    int (*fstat)(struct fd *fd, struct statbuf *stat);
+    
+    int (*open)(struct mount *mount, const char *path, int flags, int mode, struct fd *fd);
+    int (*readlink)(struct mount *mount, const char *path, char *buf, size_t size);
+    
+    int (*link)(struct mount *mount, const char *src, const char *dst);
+    int (*unlink)(struct mount *mount, const char *path);
+    int (*rmdir)(struct mount *mount, const char *path);
+    int (*rename)(struct mount *mount, const char *src, const char *dst);
+    
+    int (*mkdir)(struct mount *mount, const char *path, mode_t mode);
+    int (*symlink)(struct mount *mount, const char *target, const char *link);
+};
+```
+
+Built-in filesystems:
+- `realfs` - Real host filesystem
+- `procfs` - Process information filesystem (/proc)
+- `devptsfs` - Pseudoterminal device filesystem
+- `tmpfs` - Temporary in-memory filesystem
+
+**Register custom filesystem:**
+
+```c fs/mount.c:16-24
+void fs_register(const struct fs_ops *fs);
+```
+
+```c
+static const struct fs_ops myfs = {
+    .mount = myfs_mount,
+    .open = myfs_open,
+    .stat = myfs_stat,
+    // ... other operations ...
+};
+
+fs_register(&myfs);
+```

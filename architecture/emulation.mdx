@@ -1,0 +1,417 @@
+---
+title: "CPU Emulation"
+description: "Deep dive into x86/x86_64 instruction emulation and the threaded code interpreter"
+---
+
+iSH emulates a complete x86 or x86_64 CPU in usermode, allowing Linux binaries to run on iOS devices. The emulation layer is the performance-critical heart of the system.
+
+## Emulation Strategy
+
+iSH uses a **threaded code interpreter** rather than traditional interpretation or JIT compilation.
+
+<Info>
+  From the README: "It's not quite a JIT since it doesn't target machine code. Instead it generates an array of pointers to functions called gadgets, and each gadget ends with a tailcall to the next function; like the threaded code technique used by some Forth interpreters. The result is a speedup of roughly 3-5x compared to emulation using a simpler switch dispatch."
+</Info>
+
+### Why Threaded Code?
+
+<Tabs>
+  <Tab title="Threaded Code (iSH)">
+    ```c
+    // Array of function pointers
+    void (*gadgets[])() = {
+      &gadget_mov_eax_imm,
+      &gadget_add_eax_ebx,
+      &gadget_ret,
+      // ...
+    };
+    
+    // Each gadget tail-calls the next
+    void gadget_mov_eax_imm() {
+      cpu->eax = *ip++;
+      (*ip++)();  // Tail call to next gadget
+    }
+    ```
+    **Pros**: 3-5x faster, no switch overhead
+    
+    **Cons**: Complex implementation, written in assembly
+  </Tab>
+  
+  <Tab title="Switch Dispatch">
+    ```c
+    while (true) {
+      switch (*ip++) {
+        case MOV_EAX_IMM:
+          cpu->eax = *ip++;
+          break;
+        case ADD_EAX_EBX:
+          cpu->eax += cpu->ebx;
+          break;
+        // ...
+      }
+    }
+    ```
+    **Pros**: Simple, portable
+    
+    **Cons**: Branch misprediction overhead
+  </Tab>
+  
+  <Tab title="JIT Compilation">
+    ```c
+    // Translate x86 to ARM64
+    translate_block(x86_code, arm64_buffer);
+    execute(arm64_buffer);
+    ```
+    **Pros**: Near-native performance
+    
+    **Cons**: Not allowed on iOS (W^X policy)
+  </Tab>
+</Tabs>
+
+## CPU State Structure
+
+The complete CPU state is maintained in the `cpu_state` structure:
+
+```c title="emu/cpu.h:35"
+struct cpu_state {
+    struct mmu *mmu;
+    long cycle;
+
+    // General purpose registers (32-bit mode)
+    union {
+        struct {
+            _REGX(a);  // eax/ax/al/ah
+            _REGX(c);  // ecx/cx/cl/ch
+            _REGX(d);  // edx/dx/dl/dh
+            _REGX(b);  // ebx/bx/bl/bh
+            _REG(sp);  // esp/sp
+            _REG(bp);  // ebp/bp
+            _REG(si);  // esi/si
+            _REG(di);  // edi/di
+        };
+        dword_t regs[8];
+    };
+    
+    #ifdef ISH_GUEST_64BIT
+    // x86_64 additional registers r8-r15
+    _REG64(8);
+    _REG64(9);
+    _REG64(10);
+    _REG64(11);
+    _REG64(12);
+    _REG64(13);
+    _REG64(14);
+    _REG64(15);
+    #endif
+
+    // Instruction pointer
+    dword_t eip;  // 32-bit mode
+    // or
+    qword_t rip;  // 64-bit mode
+
+    // Flags register
+    union {
+        dword_t eflags;
+        struct {
+            bitfield cf_bit:1;  // Carry flag
+            bitfield pf:1;      // Parity flag
+            bitfield af:1;      // Auxiliary carry
+            bitfield zf:1;      // Zero flag
+            bitfield sf:1;      // Sign flag
+            bitfield tf:1;      // Trap flag
+            bitfield if_:1;     // Interrupt enable
+            bitfield df:1;      // Direction flag
+            bitfield of_bit:1;  // Overflow flag
+            bitfield iopl:2;    // I/O privilege level
+        };
+    };
+    
+    // Lazy flag evaluation
+    dword_t res, op1, op2;
+    byte_t cf, of;
+    byte_t flags_res;
+
+    // FPU/MMX/SSE registers
+    union mm_reg mm[8];           // MMX registers
+    union xmm_reg xmm[8];         // SSE registers (16 in 64-bit mode)
+    float80 fp[8];                // x87 FPU stack
+    word_t fsw;                   // FPU status word
+    word_t fcw;                   // FPU control word
+
+    // Segment registers (for TLS)
+    word_t gs;
+    addr_t tls_ptr;
+    
+    // Page fault information
+    addr_t segfault_addr;
+    bool segfault_was_write;
+};
+```
+
+### Register Access
+
+The CPU state uses clever C unions to allow accessing registers in multiple ways:
+
+<CodeGroup>
+```c 32-bit Access
+// Access eax as 32-bit
+cpu->eax = 0x12345678;
+
+// Access ax as 16-bit (low word)
+cpu->ax = 0x5678;
+
+// Access al as 8-bit (low byte)
+cpu->al = 0x78;
+
+// Access ah as 8-bit (high byte)
+cpu->ah = 0x56;
+```
+
+```c 64-bit Access
+#ifdef ISH_GUEST_64BIT
+// Access rax as 64-bit
+cpu->rax = 0x123456789ABCDEF0;
+
+// Access eax as 32-bit (low dword)
+cpu->eax = 0x9ABCDEF0;
+
+// Access ax, al, ah work the same
+cpu->ax = 0xDEF0;
+#endif
+```
+
+```c Array Access
+// Access registers by index
+for (int i = 0; i < 8; i++) {
+    cpu->regs[i] = 0;  // Clear all registers
+}
+```
+</CodeGroup>
+
+## Gadget System
+
+Gadgets are small assembly functions that implement individual instruction behaviors. The gadget system is defined in `asbestos/gadgets-generic.h`.
+
+### Gadget Arrays
+
+Gadgets are organized into arrays indexed by operand types and sizes:
+
+```c title="asbestos/gadgets-generic.h:11"
+// Operand types
+#define GADGET_LIST REG_LIST,imm,mem,addr,gs
+
+// Register list
+#define REG_LIST reg_a,reg_c,reg_d,reg_b,reg_sp,reg_bp,reg_si,reg_di
+
+// Sizes
+#define SIZE_LIST 8,16,32
+```
+
+This creates arrays like:
+- `mov_gadgets[size][dst_type][src_type]`
+- `add_gadgets[size][dst_type][src_type]`
+- etc.
+
+### Example Gadget Structure
+
+```asm
+// Pseudo-assembly for a MOV gadget
+gadget_mov_reg_imm:
+    mov REG, IMM        // Execute the instruction
+    jmp next_gadget     // Tail call to next gadget
+```
+
+<Warning>
+  From the README: "I made the decision to write nearly all of the gadgets in assembly language. This was probably a good decision with regards to performance (though I'll never know for sure), but a horrible decision with regards to readability, maintainability, and my sanity."
+</Warning>
+
+## Memory Management
+
+### MMU (Memory Management Unit)
+
+The MMU translates guest virtual addresses to host memory pointers:
+
+```c title="emu/mmu.h:31"
+struct mmu {
+    struct mmu_ops *ops;
+    struct asbestos *asbestos;
+    uint64_t changes;  // Incremented on memory layout changes
+};
+
+struct mmu_ops {
+    // type is MEM_READ or MEM_WRITE
+    void *(*translate)(struct mmu *mmu, addr_t addr, int type);
+};
+```
+
+### TLB (Translation Lookaside Buffer)
+
+The TLB caches recent address translations for performance:
+
+```c title="emu/tlb.c:4"
+void tlb_refresh(struct tlb *tlb, struct mmu *mmu) {
+    if (tlb->mmu == mmu && tlb->mem_changes == mmu->changes)
+        return;  // TLB still valid
+    
+    // Flush TLB on memory layout change
+    tlb->mmu = mmu;
+    tlb->dirty_page = TLB_PAGE_EMPTY;
+    tlb->mem_changes = mmu->changes;
+    tlb_flush(tlb);
+}
+
+void *tlb_handle_miss(struct tlb *tlb, addr_t addr, int type) {
+    // Translate address via MMU
+    char *ptr = mmu_translate(tlb->mmu, TLB_PAGE(addr), type);
+    
+    // Cache the translation
+    struct tlb_entry *tlb_ent = &tlb->entries[TLB_INDEX(addr)];
+    tlb_ent->page = TLB_PAGE(addr);
+    tlb_ent->page_if_writable = (type == MEM_WRITE) ? tlb_ent->page : TLB_PAGE_EMPTY;
+    tlb_ent->data_minus_addr = (uintptr_t)ptr - TLB_PAGE(addr);
+    
+    return (void *)(tlb_ent->data_minus_addr + addr);
+}
+```
+
+### Page Fault Handling
+
+When memory access fails, the emulator triggers a page fault:
+
+```c title="kernel/calls.c:545"
+if (interrupt == INT_GPF) {
+    // Try to handle the page fault
+    void *ptr = mem_ptr(current->mem, cpu->segfault_addr,
+                       cpu->segfault_was_write ? MEM_WRITE : MEM_READ);
+    
+    if (ptr == NULL) {
+        // Unhandled page fault - deliver SIGSEGV to the process
+        fprintf(stderr, "%d page fault on %#llx at ip=%#llx\n",
+               current->pid, cpu->segfault_addr, CPU_IP(cpu));
+        
+        struct siginfo_ info = {
+            .code = mem_segv_reason(current->mem, cpu->segfault_addr),
+            .fault.addr = cpu->segfault_addr,
+        };
+        deliver_signal(current, SIGSEGV_, info);
+    }
+}
+```
+
+## Instruction Support
+
+iSH supports a comprehensive subset of x86/x86_64 instructions:
+
+<Tabs>
+  <Tab title="Integer Instructions">
+    - **Arithmetic**: ADD, SUB, MUL, DIV, INC, DEC, NEG
+    - **Logic**: AND, OR, XOR, NOT, TEST
+    - **Shifts**: SHL, SHR, SAL, SAR, ROL, ROR
+    - **Bit manipulation**: BT, BTS, BTR, BTC, BSF, BSR
+  </Tab>
+  
+  <Tab title="Control Flow">
+    - **Jumps**: JMP, Jcc (conditional jumps)
+    - **Calls**: CALL, RET
+    - **Loops**: LOOP, LOOPZ, LOOPNZ
+    - **Interrupts**: INT (for syscalls)
+  </Tab>
+  
+  <Tab title="Memory">
+    - **Moves**: MOV, MOVSX, MOVZX
+    - **Stack**: PUSH, POP
+    - **String**: MOVS, STOS, LODS, CMPS, SCAS
+    - **Exchange**: XCHG, CMPXCHG
+  </Tab>
+  
+  <Tab title="FPU/SIMD">
+    - **x87 FPU**: Basic floating-point arithmetic (emu/fpu.c)
+    - **MMX**: 64-bit SIMD operations (emu/mmx.c)
+    - **SSE**: 128-bit vector operations (emu/vec.c)
+    - Limited SSE2/SSE3 support
+  </Tab>
+</Tabs>
+
+## Flag Evaluation
+
+iSH uses **lazy flag evaluation** to optimize performance:
+
+```c title="emu/cpu.h:262"
+// Instead of computing flags immediately:
+// cpu->zf = (result == 0);
+// cpu->sf = (result < 0);
+// cpu->pf = compute_parity(result);
+
+// Store the result and operands:
+cpu->res = result;
+cpu->op1 = operand1;
+cpu->op2 = operand2;
+cpu->zf_res = 1;  // ZF should be computed from res
+cpu->sf_res = 1;  // SF should be computed from res
+cpu->pf_res = 1;  // PF should be computed from res
+
+// Compute only when accessed:
+#define ZF (cpu->zf_res ? cpu->res == 0 : cpu->zf)
+#define SF (cpu->sf_res ? (int32_t)cpu->res < 0 : cpu->sf)
+#define PF (cpu->pf_res ? !__builtin_parity(cpu->res & 0xff) : cpu->pf)
+```
+
+This avoids computing flag values that are never read.
+
+## 32-bit vs 64-bit Mode
+
+iSH can be compiled for either 32-bit (i386) or 64-bit (x86_64) guest mode:
+
+<CodeGroup>
+```c 32-bit Mode
+// Default configuration
+// - 8 general purpose registers (eax-edi)
+// - 32-bit addressing
+// - int 0x80 for syscalls
+// - 8 XMM registers
+```
+
+```c 64-bit Mode
+#ifdef ISH_GUEST_64BIT
+// Extended configuration
+// - 16 general purpose registers (rax-r15)
+// - 64-bit addressing
+// - syscall instruction
+// - 16 XMM registers
+#endif
+```
+</CodeGroup>
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="TLB Hit Rate">
+    The TLB is critical for performance. Memory accesses that hit in the TLB are nearly as fast as native code. The TLB is automatically flushed when:
+    - Memory mappings change (mmap, munmap, mprotect)
+    - Process context switches
+    
+    Source: `emu/tlb.c:4`
+  </Accordion>
+  
+  <Accordion title="Gadget Caching">
+    Frequently executed code paths will have their gadget sequences in the CPU's instruction cache, reducing memory access overhead.
+  </Accordion>
+  
+  <Accordion title="Lazy Flag Evaluation">
+    Most instructions set flags but don't read them. Lazy evaluation saves significant computation by only calculating flag values when actually needed (e.g., for conditional jumps).
+    
+    Source: `emu/cpu.h:262`
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Syscalls" icon="exchange" href="/architecture/syscalls">
+    How emulated code interacts with the kernel
+  </Card>
+  
+  <Card title="Memory Management" icon="memory" href="/architecture/filesystem">
+    Virtual memory and filesystem interaction
+  </Card>
+</CardGroup>

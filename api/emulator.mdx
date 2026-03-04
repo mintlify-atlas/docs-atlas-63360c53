@@ -1,0 +1,458 @@
+---
+title: "Emulator API"
+description: "CPU emulation, registers, and floating-point operations"
+---
+
+The emulator API provides low-level CPU state management, instruction execution, and register access for the x86/x86_64 emulation layer.
+
+## Core CPU Functions
+
+### cpu_run_to_interrupt
+
+Executes CPU instructions until an interrupt occurs.
+
+<ParamField path="cpu" type="struct cpu_state *" required>
+  Pointer to the CPU state structure
+</ParamField>
+
+<ParamField path="tlb" type="struct tlb *" required>
+  Pointer to the Translation Lookaside Buffer for memory address translation
+</ParamField>
+
+<ResponseField name="return" type="int">
+  Status code indicating the reason for stopping execution
+</ResponseField>
+
+```c emu/cpu.h:16
+int cpu_run_to_interrupt(struct cpu_state *cpu, struct tlb *tlb);
+```
+
+**Usage Example:**
+
+```c
+struct cpu_state cpu;
+struct tlb tlb;
+
+// Initialize CPU and TLB
+tlb_refresh(&tlb, cpu.mmu);
+
+// Run until interrupt
+int status = cpu_run_to_interrupt(&cpu, &tlb);
+```
+
+### cpu_poke
+
+Interrupts the CPU execution by setting the poked flag.
+
+<ParamField path="cpu" type="struct cpu_state *" required>
+  Pointer to the CPU state to interrupt
+</ParamField>
+
+```c emu/cpu.h:17
+void cpu_poke(struct cpu_state *cpu);
+```
+
+**Usage:**
+
+```c
+// Signal CPU to stop execution
+cpu_poke(&current->cpu);
+```
+
+## CPU State Structure
+
+The `cpu_state` structure represents the complete x86/x86_64 processor state.
+
+### General Purpose Registers
+
+```c emu/cpu.h:35-117
+struct cpu_state {
+    struct mmu *mmu;
+    long cycle;
+
+    // General registers (32-bit mode)
+    union {
+        struct {
+            union { dword_t eax; word_t ax; struct { byte_t al; byte_t ah; }; };
+            union { dword_t ecx; word_t cx; struct { byte_t cl; byte_t ch; }; };
+            union { dword_t edx; word_t dx; struct { byte_t dl; byte_t dh; }; };
+            union { dword_t ebx; word_t bx; struct { byte_t bl; byte_t bh; }; };
+            union { dword_t esp; word_t sp; };
+            union { dword_t ebp; word_t bp; };
+            union { dword_t esi; word_t si; };
+            union { dword_t edi; word_t di; };
+        };
+        dword_t regs[8];
+    };
+
+    dword_t eip;  // Instruction pointer
+    // ...
+};
+```
+
+**Key Fields:**
+
+<ParamField path="mmu" type="struct mmu *">
+  Memory Management Unit for address translation
+</ParamField>
+
+<ParamField path="cycle" type="long">
+  Current CPU cycle counter
+</ParamField>
+
+<ParamField path="eax, ebx, ecx, edx" type="dword_t">
+  General purpose registers (accessible as eXX, XX, Xl, Xh)
+</ParamField>
+
+<ParamField path="esp" type="dword_t">
+  Stack pointer
+</ParamField>
+
+<ParamField path="ebp" type="dword_t">
+  Base pointer
+</ParamField>
+
+<ParamField path="esi, edi" type="dword_t">
+  Source and destination index registers
+</ParamField>
+
+<ParamField path="eip" type="dword_t">
+  Instruction pointer (program counter)
+</ParamField>
+
+### Register Access Macros
+
+For portable access to instruction pointer and stack pointer across 32-bit and 64-bit modes:
+
+```c emu/cpu.h:340-346
+#ifdef ISH_GUEST_64BIT
+#define CPU_IP(cpu) ((cpu)->rip)
+#define CPU_SP(cpu) ((cpu)->rsp)
+#else
+#define CPU_IP(cpu) ((cpu)->eip)
+#define CPU_SP(cpu) ((cpu)->esp)
+#endif
+```
+
+**Example:**
+
+```c
+// Portable register access
+addr_t instruction_ptr = CPU_IP(&cpu);
+addr_t stack_ptr = CPU_SP(&cpu);
+```
+
+### CPU Flags
+
+```c emu/cpu.h:127-173
+union {
+    dword_t eflags;
+    struct {
+        bitfield cf_bit:1;   // Carry flag
+        bitfield pad1_1:1;
+        bitfield pf:1;       // Parity flag
+        bitfield pad2_0:1;
+        bitfield af:1;       // Auxiliary flag
+        bitfield pad3_0:1;
+        bitfield zf:1;       // Zero flag
+        bitfield sf:1;       // Sign flag
+        bitfield tf:1;       // Trap flag
+        bitfield if_:1;      // Interrupt flag
+        bitfield df:1;       // Direction flag
+        bitfield of_bit:1;   // Overflow flag
+        bitfield iopl:2;     // I/O privilege level
+    };
+};
+
+// Flag computation state
+byte_t cf, of;
+dword_t res, op1, op2;
+byte_t flags_res;  // Controls lazy flag evaluation
+```
+
+**Flag Macros:**
+
+```c emu/cpu.h:262-267
+#define ZF (cpu->zf_res ? cpu->res == 0 : cpu->zf)
+#define SF (cpu->sf_res ? (int32_t) cpu->res < 0 : cpu->sf)
+#define CF (cpu->cf)
+#define OF (cpu->of)
+#define PF (cpu->pf_res ? !__builtin_parity(cpu->res & 0xff) : cpu->pf)
+#define AF (cpu->af_ops ? ((cpu->op1 ^ cpu->op2 ^ cpu->res) >> 4) & 1 : cpu->af)
+```
+
+## SIMD Registers
+
+### MMX Registers
+
+```c emu/cpu.h:19-22
+union mm_reg {
+    qword_t qw;      // 64-bit quadword
+    dword_t dw[2];   // Two 32-bit dwords
+};
+```
+
+The CPU state contains 8 MMX registers:
+
+```c emu/cpu.h:175
+union mm_reg mm[8];
+```
+
+### XMM Registers
+
+```c emu/cpu.h:23-31
+union xmm_reg {
+    unsigned __int128 u128;  // 128-bit integer
+    qword_t qw[2];           // Two 64-bit quadwords
+    uint32_t u32[4];         // Four 32-bit integers
+    uint16_t u16[8];         // Eight 16-bit integers
+    uint8_t u8[16];          // Sixteen 8-bit integers
+    float f32[4];            // Four 32-bit floats
+    double f64[2];           // Two 64-bit doubles
+};
+```
+
+Number of XMM registers depends on architecture:
+
+```c emu/cpu.h:176-180
+#ifdef ISH_GUEST_64BIT
+union xmm_reg xmm[16];  // x86_64 has 16 XMM registers
+#else
+union xmm_reg xmm[8];   // x86 has 8 XMM registers
+#endif
+```
+
+**Usage Example:**
+
+```c
+// Access XMM register as different types
+cpu.xmm[0].f32[0] = 3.14f;           // First float
+cpu.xmm[0].u32[1] = 0x12345678;      // Second dword
+double d = cpu.xmm[1].f64[0];         // First double
+```
+
+## Floating-Point Unit
+
+### FPU State
+
+```c emu/cpu.h:182-217
+// FPU register stack
+float80 fp[8];
+
+// FPU status word
+union {
+    word_t fsw;
+    struct {
+        bitfield ie:1;      // Invalid operation
+        bitfield de:1;      // Denormalized operand
+        bitfield ze:1;      // Divide by zero
+        bitfield oe:1;      // Overflow
+        bitfield ue:1;      // Underflow
+        bitfield pe:1;      // Precision
+        bitfield stf:1;     // Stack fault
+        bitfield es:1;      // Exception status
+        bitfield c0:1;      // Condition code 0
+        bitfield c1:1;      // Condition code 1
+        bitfield c2:1;      // Condition code 2
+        unsigned top:3;     // Stack top pointer
+        bitfield c3:1;      // Condition code 3
+        bitfield b:1;       // FPU busy
+    };
+};
+
+// FPU control word
+union {
+    word_t fcw;
+    struct {
+        bitfield im:1;      // Invalid operation mask
+        bitfield dm:1;      // Denormalized operand mask
+        bitfield zm:1;      // Zero divide mask
+        bitfield om:1;      // Overflow mask
+        bitfield um:1;      // Underflow mask
+        bitfield pm:1;      // Precision mask
+        bitfield pad4:2;
+        bitfield pc:2;      // Precision control
+        bitfield rc:2;      // Rounding control
+        bitfield y:1;
+    };
+};
+```
+
+### FPU Operations
+
+<AccordionGroup>
+  <Accordion title="Stack Operations">
+    ```c emu/fpu.h:30-32
+    void fpu_pop(struct cpu_state *cpu);
+    void fpu_xch(struct cpu_state *cpu, int i);
+    void fpu_incstp(struct cpu_state *cpu);
+    ```
+  </Accordion>
+
+  <Accordion title="Load Operations">
+    ```c emu/fpu.h:51-58
+    void fpu_ld(struct cpu_state *cpu, int i);
+    void fpu_ldc(struct cpu_state *cpu, enum fpu_const c);
+    void fpu_ild16(struct cpu_state *cpu, int16_t *i);
+    void fpu_ild32(struct cpu_state *cpu, int32_t *i);
+    void fpu_ild64(struct cpu_state *cpu, int64_t *i);
+    void fpu_ldm32(struct cpu_state *cpu, float *f);
+    void fpu_ldm64(struct cpu_state *cpu, double *f);
+    void fpu_ldm80(struct cpu_state *cpu, float80 *f);
+    ```
+  </Accordion>
+
+  <Accordion title="Store Operations">
+    ```c emu/fpu.h:34-40
+    void fpu_st(struct cpu_state *cpu, int i);
+    void fpu_ist16(struct cpu_state *cpu, int16_t *i);
+    void fpu_ist32(struct cpu_state *cpu, int32_t *i);
+    void fpu_ist64(struct cpu_state *cpu, int64_t *i);
+    void fpu_stm32(struct cpu_state *cpu, float *f);
+    void fpu_stm64(struct cpu_state *cpu, double *f);
+    void fpu_stm80(struct cpu_state *cpu, float80 *f);
+    ```
+  </Accordion>
+
+  <Accordion title="Arithmetic Operations">
+    ```c emu/fpu.h:79-84
+    void fpu_add(struct cpu_state *cpu, int srci, int dsti);
+    void fpu_sub(struct cpu_state *cpu, int srci, int dsti);
+    void fpu_subr(struct cpu_state *cpu, int srci, int dsti);
+    void fpu_mul(struct cpu_state *cpu, int srci, int dsti);
+    void fpu_div(struct cpu_state *cpu, int srci, int dsti);
+    void fpu_divr(struct cpu_state *cpu, int srci, int dsti);
+    ```
+  </Accordion>
+
+  <Accordion title="Transcendental Operations">
+    ```c emu/fpu.h:60-67
+    void fpu_prem(struct cpu_state *cpu);     // Partial remainder
+    void fpu_rndint(struct cpu_state *cpu);   // Round to integer
+    void fpu_scale(struct cpu_state *cpu);    // Scale
+    void fpu_abs(struct cpu_state *cpu);      // Absolute value
+    void fpu_chs(struct cpu_state *cpu);      // Change sign
+    void fpu_sqrt(struct cpu_state *cpu);     // Square root
+    void fpu_yl2x(struct cpu_state *cpu);     // Y * log2(X)
+    void fpu_2xm1(struct cpu_state *cpu);     // 2^X - 1
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### FPU Constants
+
+```c emu/fpu.h:11-28
+enum fpu_const {
+    fconst_one = 0,     // 1.0
+    fconst_log2t = 1,   // log2(10)
+    fconst_log2e = 2,   // log2(e)
+    fconst_pi = 3,      // π
+    fconst_log2 = 4,    // log10(2)
+    fconst_ln2 = 5,     // ln(2)
+    fconst_zero = 6,    // 0.0
+};
+
+static const float80 fpu_consts[];
+```
+
+**Example:**
+
+```c
+// Load π onto FPU stack
+fpu_ldc(&cpu, fconst_pi);
+```
+
+## TLB Operations
+
+The Translation Lookaside Buffer provides fast address translation.
+
+### TLB Structure
+
+```c emu/tlb.h:8-23
+struct tlb_entry {
+    page_t page;
+    page_t page_if_writable;
+    uintptr_t data_minus_addr;
+};
+
+#define TLB_SIZE (1 << 10)  // 1024 entries
+
+struct tlb {
+    struct mmu *mmu;
+    page_t dirty_page;
+    unsigned mem_changes;
+    addr_t segfault_addr;
+    struct tlb_entry entries[TLB_SIZE];
+};
+```
+
+### TLB Functions
+
+<ParamField path="tlb_refresh" type="void">
+  Refreshes the TLB with a new MMU
+</ParamField>
+
+<ParamField path="tlb_flush" type="void">
+  Invalidates all TLB entries
+</ParamField>
+
+<ParamField path="tlb_handle_miss" type="void *">
+  Handles TLB miss by loading page from MMU
+</ParamField>
+
+```c emu/tlb.h:32-35
+void tlb_refresh(struct tlb *tlb, struct mmu *mmu);
+void tlb_free(struct tlb *tlb);
+void tlb_flush(struct tlb *tlb);
+void *tlb_handle_miss(struct tlb *tlb, addr_t addr, int type);
+```
+
+### TLB Read/Write
+
+```c emu/tlb.h:47-55
+bool tlb_read(struct tlb *tlb, addr_t addr, void *out, unsigned size);
+bool tlb_write(struct tlb *tlb, addr_t addr, const void *value, unsigned size);
+```
+
+**Usage Example:**
+
+```c
+struct tlb tlb;
+tlb_refresh(&tlb, cpu.mmu);
+
+// Read 4 bytes from guest memory
+uint32_t value;
+if (tlb_read(&tlb, 0x1000, &value, sizeof(value))) {
+    // Success
+}
+
+// Write 4 bytes to guest memory
+uint32_t data = 0x12345678;
+if (tlb_write(&tlb, 0x2000, &data, sizeof(data))) {
+    // Success
+}
+```
+
+## Thread-Local Storage
+
+```c emu/cpu.h:219-226
+// TLS support
+word_t gs;              // GS segment selector (32-bit)
+addr_t tls_ptr;         // TLS pointer
+
+#ifdef ISH_GUEST_64BIT
+qword_t fs_base;        // FS base for TLS (64-bit)
+qword_t gs_base;        // GS base for TLS (64-bit)
+#endif
+```
+
+## Helper Functions
+
+### Flag Management
+
+```c emu/cpu.h:269-287
+static inline void collapse_flags(struct cpu_state *cpu);
+static inline void expand_flags(struct cpu_state *cpu);
+```
+
+These functions convert between lazy flag evaluation and explicit flag values.

@@ -1,97 +1,208 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: iSH Documentation
+description: Run a Linux shell on iOS with x86/x86_64 emulation
+mode: custom
 ---
 
-## Setting up
+<div className="relative overflow-hidden dark:bg-[#0f1117] bg-white">
+  {/* Hero Section */}
+  <div className="relative py-20 px-4 sm:px-6 lg:px-8 dark:bg-gradient-to-b dark:from-[#1a1e33] dark:to-[#0f1117] bg-gradient-to-b from-gray-50 to-white">
+    <div className="max-w-7xl mx-auto">
+      <div className="lg:grid lg:grid-cols-12 lg:gap-8 items-center">
+        <div className="lg:col-span-7">
+          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold dark:text-white text-gray-900 mb-6">
+            Linux Shell for iOS
+          </h1>
+          <p className="text-lg sm:text-xl dark:text-gray-300 text-gray-600 mb-8 max-w-2xl">
+            Run a full-featured Linux shell environment on your iPhone or iPad using x86/x86_64 emulation and syscall translation.
+          </p>
+          <div className="flex flex-wrap gap-4">
+            <a
+              href="/quickstart"
+              className="inline-flex items-center px-6 py-3 rounded-lg font-semibold text-white bg-[#7c7c7c] hover:bg-[#666666] transition-colors"
+            >
+              Get Started
+              <svg className="ml-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+            </a>
+            <a
+              href="/architecture/overview"
+              className="inline-flex items-center px-6 py-3 rounded-lg font-semibold dark:text-white text-gray-900 dark:border-white/30 border-gray-300 border dark:bg-white/10 bg-gray-50 dark:hover:bg-white/20 hover:bg-gray-100 transition-colors"
+            >
+              Architecture
+            </a>
+          </div>
+        </div>
+        <div className="hidden lg:block lg:col-span-5">
+          <div className="dark:bg-[#1a1d27] bg-gray-100 p-8 rounded-2xl dark:border-[#27272a] border-gray-200 border">
+            <pre className="text-sm dark:text-gray-300 text-gray-700">
+              <code>{`$ uname -a
+Linux localhost 4.20.69-ish x86_64
 
-Get your documentation site up and running in minutes.
+$ apk add python3
+fetch https://dl-cdn.alpinelinux.org/alpine/...
+Installing python3 (3.11.6-r0)
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+$ python3 --version
+Python 3.11.6
 
-## Make it yours
+$ ls /dev
+console  null  pts  random  tty  urandom`}</code>
+            </pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-Design a docs site that looks great and empowers your users.
+  {/* Quick Start Section */}
+  <div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+    <h2 className="text-2xl sm:text-3xl font-semibold dark:text-white text-gray-900 mb-4">
+      Quick Start
+    </h2>
+    <p className="text-base dark:text-gray-400 text-gray-600 mb-8">
+      Get iSH running on your iOS device in minutes
+    </p>
+    <Steps>
+      <Step title="Install from App Store">
+        Download iSH from the [App Store](https://apps.apple.com/us/app/ish-shell/id1436902243) or join the [TestFlight beta](https://testflight.apple.com/join/97i7KM8O) for the latest features.
+      </Step>
+      <Step title="Launch the Shell">
+        Open iSH and you'll be greeted with a Linux shell running Alpine Linux. The filesystem is pre-configured and ready to use.
+        
+        ```bash
+        # Check your environment
+        $ uname -a
+        $ whoami
+        ```
+      </Step>
+      <Step title="Install Packages">
+        Use Alpine's package manager to install software. iSH comes with a working network stack for downloads.
+        
+        ```bash
+        # Update package index
+        $ apk update
+        
+        # Install your favorite tools
+        $ apk add git nodejs python3 vim
+        ```
+      </Step>
+      <Step title="Start Building">
+        You now have a full Linux environment on iOS. Run scripts, compile code, or use command-line tools just like on a desktop Linux system.
+      </Step>
+    </Steps>
+  </div>
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
-  </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
-  </Card>
-</Columns>
+  {/* Key Features Section */}
+  <div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+    <h2 className="text-2xl sm:text-3xl font-semibold dark:text-white text-gray-900 mb-4">
+      Key Features
+    </h2>
+    <p className="text-base dark:text-gray-400 text-gray-600 mb-8">
+      Powerful emulation and integration capabilities
+    </p>
+    <CardGroup cols={2}>
+      <Card title="x86/x86_64 Emulation" icon="microchip" href="/architecture/emulation">
+        Custom threaded code interpreter for efficient x86 and x86_64 instruction execution on ARM
+      </Card>
+      <Card title="Syscall Translation" icon="arrows-rotate" href="/architecture/syscalls">
+        Linux system calls translated to iOS equivalents for full compatibility
+      </Card>
+      <Card title="Alpine Linux" icon="mountain" href="/architecture/filesystem">
+        Complete Alpine Linux userspace with package management and filesystem support
+      </Card>
+      <Card title="Terminal Emulator" icon="terminal" href="/quickstart">
+        Full-featured terminal with TTY/PTY support, customizable themes, and keyboard shortcuts
+      </Card>
+      <Card title="Files App Integration" icon="folder-open" href="/installation">
+        iOS Files app integration via File Provider extension for easy file access
+      </Card>
+      <Card title="64-bit Architecture" icon="binary" href="/advanced/64bit-port">
+        Active port to 64-bit x86_64 guest architecture for expanded compatibility
+      </Card>
+    </CardGroup>
+  </div>
 
-## Create beautiful pages
+  {/* Explore Documentation Section */}
+  <div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+    <h2 className="text-2xl sm:text-3xl font-semibold dark:text-white text-gray-900 mb-4">
+      Explore the Documentation
+    </h2>
+    <p className="text-base dark:text-gray-400 text-gray-600 mb-8">
+      Deep dive into architecture, building from source, and advanced topics
+    </p>
+    <CardGroup cols={3}>
+      <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+        Understand the emulation engine, kernel, and filesystem
+      </Card>
+      <Card title="Building" icon="hammer" href="/building/ios">
+        Compile iSH for iOS or build the CLI tool for testing
+      </Card>
+      <Card title="API Reference" icon="code" href="/api/emulator">
+        Explore the internal APIs and system call interface
+      </Card>
+      <Card title="64-bit Port" icon="arrow-up-right-dots" href="/advanced/64bit-port">
+        Learn about the ongoing 64-bit architecture port
+      </Card>
+      <Card title="Logging & Debugging" icon="bug" href="/advanced/logging">
+        Enable debug channels and troubleshoot issues
+      </Card>
+      <Card title="Interpreter" icon="gears" href="/advanced/interpreter">
+        Deep dive into the threaded code interpreter design
+      </Card>
+    </CardGroup>
+  </div>
 
-Everything you need to create world-class documentation.
+  {/* Community & Resources Section */}
+  <div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+    <h2 className="text-2xl sm:text-3xl font-semibold dark:text-white text-gray-900 mb-4">
+      Community & Resources
+    </h2>
+    <p className="text-base dark:text-gray-400 text-gray-600 mb-8">
+      Connect with the iSH community and contribute to the project
+    </p>
+    <CardGroup cols={3}>
+      <Card title="Discord Community" icon="discord" href="/community/discord">
+        Join our Discord server for help, discussions, and updates
+      </Card>
+      <Card title="Contributing" icon="code-pull-request" href="/community/contributing">
+        Contribute code, report bugs, or improve documentation
+      </Card>
+      <Card title="FAQ" icon="circle-question" href="/community/faq">
+        Find answers to common questions and troubleshooting tips
+      </Card>
+    </CardGroup>
+  </div>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
-
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+  {/* Closing CTA Banner */}
+  <div className="mt-16 mb-16 max-w-5xl mx-auto px-6">
+    <div className="dark:bg-gradient-to-r dark:from-[#1a1d27] dark:to-[#242838] bg-gradient-to-r from-gray-50 to-gray-100 rounded-2xl p-8 sm:p-12 dark:border-[#27272a] border-gray-200 border text-center">
+      <h2 className="text-2xl sm:text-3xl font-semibold dark:text-white text-gray-900 mb-4">
+        Ready to Get Started?
+      </h2>
+      <p className="text-base dark:text-gray-400 text-gray-600 mb-8 max-w-2xl mx-auto">
+        Install iSH on your iOS device and start running Linux commands, installing packages, and building projects on the go.
+      </p>
+      <div className="flex flex-wrap justify-center gap-4">
+        <a
+          href="/quickstart"
+          className="inline-flex items-center px-6 py-3 rounded-lg font-semibold text-white bg-[#7c7c7c] hover:bg-[#666666] transition-colors"
+        >
+          Get Started Now
+        </a>
+        <a
+          href="https://github.com/Phineas1500/ish"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center px-6 py-3 rounded-lg font-semibold dark:text-white text-gray-900 dark:border-white/30 border-gray-300 border dark:bg-white/10 bg-white dark:hover:bg-white/20 hover:bg-gray-50 transition-colors"
+        >
+          <svg className="mr-2 w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+            <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
+          </svg>
+          View on GitHub
+        </a>
+      </div>
+    </div>
+  </div>
+</div>

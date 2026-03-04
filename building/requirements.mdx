@@ -1,0 +1,234 @@
+---
+title: Build Requirements
+description: System requirements and dependencies for building iSH
+---
+
+iSH has different requirements depending on whether you're building for iOS or the command-line tool.
+
+## System Requirements
+
+### For iOS Development
+
+- **macOS** (required for Xcode)
+- **Xcode** (latest version recommended)
+- **Apple Developer Account** (for device deployment)
+
+### For CLI Tool Development
+
+- **Linux** or **macOS**
+- For ptraceomatic debugging tool: 64-bit Linux 4.11 or later
+
+## Core Dependencies
+
+### Required for All Builds
+
+<Steps>
+  <Step title="Python 3">
+    Required for the Meson build system.
+    
+    ```bash
+    # Usually pre-installed on macOS and most Linux distributions
+    python3 --version
+    ```
+  </Step>
+
+  <Step title="Meson">
+    Build system used by iSH.
+    
+    ```bash
+    pip3 install meson
+    ```
+  </Step>
+
+  <Step title="Ninja">
+    Build tool used with Meson.
+    
+    **macOS:**
+    ```bash
+    brew install ninja
+    ```
+    
+    **Linux (Debian/Ubuntu):**
+    ```bash
+    sudo apt install ninja-build
+    ```
+    
+    **Linux (Arch):**
+    ```bash
+    sudo pacman -S ninja
+    ```
+  </Step>
+
+  <Step title="Clang and LLD">
+    C compiler and linker required for building iSH.
+    
+    **macOS:**
+    ```bash
+    brew install llvm
+    ```
+    
+    **Linux (Debian/Ubuntu):**
+    ```bash
+    sudo apt install clang lld
+    ```
+    
+    **Linux (Arch):**
+    ```bash
+    sudo pacman -S clang lld
+    ```
+  </Step>
+
+  <Step title="sqlite3">
+    Required for the fake filesystem database.
+    
+    **macOS:** Already installed by default
+    
+    **Linux (Debian/Ubuntu):**
+    ```bash
+    sudo apt install libsqlite3-dev
+    ```
+    
+    **Linux (Arch):**
+    ```bash
+    sudo pacman -S sqlite
+    ```
+  </Step>
+
+  <Step title="libarchive">
+    Required for the `fakefsify` tool to create Alpine filesystems.
+    
+    **macOS (Homebrew):**
+    ```bash
+    brew install libarchive
+    ```
+    
+    **macOS (MacPorts):**
+    ```bash
+    sudo port install libarchive
+    ```
+    
+    **Linux (Debian/Ubuntu):**
+    ```bash
+    sudo apt install libarchive-dev
+    ```
+    
+    **Linux (Arch):**
+    ```bash
+    sudo pacman -S libarchive
+    ```
+  </Step>
+</Steps>
+
+## Git Submodules
+
+iSH uses git submodules for dependencies. When cloning the repository, you must initialize submodules:
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/ish-app/ish.git
+
+# Or if already cloned, initialize submodules
+git submodule update --init
+```
+
+The `deps/` directory contains:
+- **zydis**: x86_64 instruction decoder (for 64-bit guest architecture)
+- **libarchive**: Archive extraction library
+- **linux**: Linux kernel sources (for Linux kernel mode)
+
+## Build Options
+
+iSH supports several build-time configuration options via Meson:
+
+### Engine Selection
+
+```bash
+-Dengine=asbestos  # Default: Custom JIT-like interpreter
+-Dengine=unicorn   # Alternative: Unicorn emulation engine
+```
+
+### Guest Architecture
+
+```bash
+-Dguest_arch=x86      # Default: 32-bit x86
+-Dguest_arch=x86_64   # 64-bit x86_64
+```
+
+### Kernel Mode
+
+```bash
+-Dkernel=ish    # Default: iSH custom kernel
+-Dkernel=linux  # Linux kernel mode
+```
+
+### Logging Channels
+
+Enable logging channels for debugging:
+
+```bash
+-Dlog="strace verbose"  # Enable strace and verbose logging
+```
+
+Available channels:
+- **strace**: Logs system call parameters and return values
+- **instr**: Logs every instruction (significantly impacts performance)
+- **verbose**: General debug logs
+
+See the [debugging documentation](/advanced/debugging) for more information on logging.
+
+### Log Handler
+
+```bash
+-Dlog_handler=dprintf  # Default: Use dprintf
+-Dlog_handler=nslog    # Use NSLog (iOS)
+```
+
+## Optional Dependencies
+
+### For Debugging Tools (Linux only)
+
+- **ptraceomatic**: Requires 64-bit Linux 4.11 or later
+- Built automatically on compatible systems
+
+### For Unicorn Engine (Optional)
+
+If using the Unicorn engine:
+
+```bash
+# Unicorn library must be available
+# See deps/unicorn for building instructions
+```
+
+## Verifying Your Environment
+
+Before building, verify all dependencies are installed:
+
+```bash
+# Check Python 3
+python3 --version
+
+# Check Meson
+meson --version
+
+# Check Ninja
+ninja --version
+
+# Check Clang
+clang --version
+
+# Check sqlite3
+sqlite3 --version
+
+# Check libarchive (macOS)
+pkg-config --modversion libarchive
+
+# Check libarchive (Linux)
+ldconfig -p | grep libarchive
+```
+
+## Next Steps
+
+Once you have all dependencies installed:
+
+- [Build for iOS](/building/ios) - Build the iOS app
+- [Build CLI Tool](/building/cli) - Build the command-line testing tool

@@ -1,0 +1,325 @@
+---
+title: 64-bit Port
+description: Understanding the x86_64 architecture support in iSH
+---
+
+## Overview
+
+iSH includes experimental support for running x86_64 (64-bit) code alongside the primary x86 (32-bit) emulation. This port extends the emulator to handle 64-bit registers, addressing modes, and instructions while maintaining compatibility with the existing 32-bit infrastructure.
+
+## Building with 64-bit Support
+
+### Meson Configuration
+
+To build iSH with 64-bit guest support, use the `guest_arch` option:
+
+```bash
+meson configure -Dguest_arch=x86_64
+```
+
+This sets the `ISH_GUEST_64BIT` preprocessor flag throughout the codebase:
+
+```c:meson.build
+# Guest architecture (x86 or x86_64)
+if get_option('guest_arch') == 'x86_64'
+    add_project_arguments('-DISH_GUEST_64BIT=1', language: 'c')
+```
+
+### Dependencies
+
+The 64-bit port requires **Zydis**, a fast x86/x86_64 disassembler library, for instruction decoding:
+
+```c:meson.build
+if get_option('guest_arch') == 'x86_64'
+    # Zydis for x86_64 instruction decoding
+    zydis_options = [
+        'default_library=static',
+        'examples=disabled',
+        'tools=disabled',
+    ]
+    zydis_proj = subproject('zydis', default_options: zydis_options)
+    zydis_dep = zydis_proj.get_variable('zydis_dep')
+else
+    zydis_dep = []
+endif
+```
+
+## Architecture Changes
+
+### CPU State Extensions
+
+The CPU state structure in `emu/cpu.h` adapts based on the `ISH_GUEST_64BIT` flag:
+
+#### 32-bit Register Macros
+
+```c:emu/cpu.h
+// 32-bit register macros - provide access to eXX, XX, Xl, Xh
+#define _REG(n) \
+    union { \
+        dword_t e##n; \
+        word_t n; \
+    }
+#define _REGX(n) \
+    union { \
+        dword_t e##n##x; \
+        word_t n##x; \
+        struct { \
+            byte_t n##l; \
+            byte_t n##h; \
+        }; \
+    }
+```
+
+#### 64-bit Register Macros
+
+```c:emu/cpu.h
+#ifdef ISH_GUEST_64BIT
+// 64-bit register macros - provide access to rXX, eXX, XX, Xl, Xh
+#define _REG(n) \
+    union { \
+        qword_t r##n; \
+        dword_t e##n; \
+        word_t n; \
+    }
+#define _REGX(n) \
+    union { \
+        qword_t r##n##x; \
+        dword_t e##n##x; \
+        word_t n##x; \
+        struct { \
+            byte_t n##l; \
+            byte_t n##h; \
+        }; \
+    }
+#define _REG64(n) \
+    union { \
+        qword_t r##n; \
+        dword_t r##n##d; \
+        word_t r##n##w; \
+        byte_t r##n##b; \
+    }
+#endif
+```
+
+### Extended Registers
+
+In 64-bit mode, the CPU state includes r8-r15:
+
+```c:emu/cpu.h
+#ifdef ISH_GUEST_64BIT
+    // x86_64 additional registers r8-r15
+    _REG64(8);
+    _REG64(9);
+    _REG64(10);
+    _REG64(11);
+    _REG64(12);
+    _REG64(13);
+    _REG64(14);
+    _REG64(15);
+#endif
+```
+
+### Instruction Pointer
+
+```c:emu/cpu.h
+#ifdef ISH_GUEST_64BIT
+    union {
+        qword_t rip;
+        dword_t eip;  // Low 32 bits accessible as eip
+    };
+#else
+    dword_t eip;
+#endif
+```
+
+### XMM Registers
+
+64-bit mode expands XMM registers from 8 to 16:
+
+```c:emu/cpu.h
+#ifdef ISH_GUEST_64BIT
+    union xmm_reg xmm[16];  // x86_64 has 16 XMM registers
+#else
+    union xmm_reg xmm[8];
+#endif
+```
+
+## Instruction Decoding
+
+### decode64.c and decode64.h
+
+The 64-bit port uses a completely separate instruction decoder powered by Zydis:
+
+```c:emu/decode64.h
+// Decoded instruction for 64-bit
+struct decoded_inst64 {
+    ZydisMnemonic mnemonic;         // Zydis mnemonic
+    uint8_t length;                 // Instruction length in bytes
+    uint8_t operand_count;          // Number of operands (up to 4)
+    struct decoded_op64 operands[4];
+
+    // Prefix information
+    bool has_lock;
+    bool has_rep;
+    bool has_repne;
+    bool has_segment_override;
+    ZydisRegister segment;
+
+    // Original Zydis structures (for detailed access if needed)
+    ZydisDecodedInstruction raw_inst;
+    ZydisDecodedOperand raw_operands[ZYDIS_MAX_OPERAND_COUNT];
+};
+```
+
+Key decoder functions:
+
+- `decode64_init()` - Initialize Zydis for 64-bit long mode
+- `decode64_inst()` - Decode a single instruction
+- `decode64_is_branch()`, `decode64_is_call()`, `decode64_is_ret()` - Instruction classification
+- `zydis_reg_to_arg64()` - Convert Zydis registers to internal format
+
+### Operand Types
+
+```c:emu/decode64.h
+enum arg64 {
+    // 64-bit GPRs (matches register order)
+    arg64_rax, arg64_rcx, arg64_rdx, arg64_rbx,
+    arg64_rsp, arg64_rbp, arg64_rsi, arg64_rdi,
+    arg64_r8,  arg64_r9,  arg64_r10, arg64_r11,
+    arg64_r12, arg64_r13, arg64_r14, arg64_r15,
+    // XMM registers
+    arg64_xmm0,  arg64_xmm1,  /* ... */ arg64_xmm15,
+    // Other operand types
+    arg64_imm,      // Immediate value
+    arg64_mem,      // Memory operand
+    arg64_rip_rel,  // RIP-relative addressing (common in x86_64)
+    arg64_gs,       // GS segment
+    arg64_fs,       // FS segment (TLS)
+};
+```
+
+## Code Generation
+
+### gen64.c vs gen.c
+
+The build system selects the appropriate code generator:
+
+```c:meson.build
+# Use gen64.c for 64-bit guest, gen.c for 32-bit guest
+if get_option('guest_arch') == 'x86_64'
+    emu_src += 'asbestos/gen64.c'
+else
+    emu_src += 'asbestos/gen.c'
+endif
+```
+
+`gen64.c` is significantly larger (331,926 bytes vs 20,945 bytes for `gen.c`) due to the expanded instruction set and addressing modes of x86_64.
+
+## Gadget Directories
+
+### Directory Structure
+
+Gadgets are organized by host and guest architecture:
+
+```c:meson.build
+# Select gadget directory based on host and guest architecture
+# For 64-bit guest, use gadgets-<host>-64 directory
+if get_option('guest_arch') == 'x86_64'
+    gadgets = 'asbestos/gadgets-' + host_machine.cpu_family() + '-64'
+else
+    gadgets = 'asbestos/gadgets-' + host_machine.cpu_family()
+endif
+```
+
+Examples:
+- `gadgets-aarch64` - 32-bit guest on ARM64 host
+- `gadgets-aarch64-64` - **64-bit guest on ARM64 host**
+- `gadgets-x86_64` - 32-bit guest on x86_64 host
+
+### Gadget Assembly Files
+
+Each gadget directory contains:
+
+```c:meson.build
+emu_src += [
+    gadgets+'/entry.S',     // Entry/exit points
+    gadgets+'/memory.S',    // Memory operations
+    gadgets+'/control.S',   // Control flow
+    gadgets+'/math.S',      // Arithmetic operations
+    gadgets+'/bits.S',      // Bit manipulation
+    gadgets+'/string.S',    // String operations
+    gadgets+'/misc.S',      // Miscellaneous
+]
+```
+
+The 64-bit gadget files are substantially larger to handle the extended instruction set.
+
+## Current Status
+
+The 64-bit port is **experimental**. Key considerations:
+
+- **Decoder**: Uses Zydis for robust instruction decoding
+- **Gadgets**: 64-bit gadget implementations exist for AArch64 hosts
+- **Register State**: Full 64-bit register support with backward compatibility for 32-bit sub-registers
+- **Addressing**: Supports RIP-relative addressing and 64-bit memory operands
+- **TLS**: Includes FS/GS base register support for thread-local storage
+
+### What Works
+
+- Basic 64-bit instruction execution
+- Extended register access (r8-r15)
+- 64-bit addressing modes
+- RIP-relative addressing
+- Extended XMM register set (16 registers)
+
+### Build Testing
+
+To test the 64-bit build:
+
+```bash
+meson setup build -Dguest_arch=x86_64
+cd build
+ninja
+```
+
+## Implementation Notes
+
+### Portable Macros
+
+Code uses portable macros to work with both architectures:
+
+```c:emu/cpu.h
+// Portable register access macros
+#ifdef ISH_GUEST_64BIT
+#define CPU_IP(cpu) ((cpu)->rip)
+#define CPU_SP(cpu) ((cpu)->rsp)
+#else
+#define CPU_IP(cpu) ((cpu)->eip)
+#define CPU_SP(cpu) ((cpu)->esp)
+#endif
+```
+
+### Crash Handler
+
+The crash handler in `main.c` displays appropriate register state:
+
+```c:main.c
+#ifdef ISH_GUEST_64BIT
+    fprintf(stderr, "x86_64 CPU state at crash:\n");
+    fprintf(stderr, "  RIP=0x%llx RSP=0x%llx RBP=0x%llx\n",
+            (unsigned long long)cpu->rip, (unsigned long long)cpu->rsp,
+            (unsigned long long)cpu->rbp);
+    fprintf(stderr, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+            (unsigned long long)cpu->rax, (unsigned long long)cpu->rbx,
+            (unsigned long long)cpu->rcx, (unsigned long long)cpu->rdx);
+#else
+    fprintf(stderr, "x86 CPU state at crash:\n");
+    fprintf(stderr, "  EIP=0x%x ESP=0x%x EBP=0x%x\n",
+            cpu->eip, cpu->esp, cpu->ebp);
+#endif
+```
+
+## See Also
+
+- [Interpreter](/advanced/interpreter) - Gadget system architecture
+- [Debugging](/advanced/debugging) - Tools for debugging the emulator

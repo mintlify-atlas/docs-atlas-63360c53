@@ -1,0 +1,503 @@
+---
+title: "System Call Handling"
+description: "How iSH translates Linux syscalls to iOS/Darwin APIs"
+---
+
+System calls (syscalls) are the primary interface between user programs and the kernel. iSH implements Linux syscalls by either translating them to iOS/Darwin equivalents or emulating them entirely in userspace.
+
+## Syscall Flow
+
+Here's how a syscall flows through the system:
+
+<Steps>
+  <Step title="Syscall Instruction">
+    The emulated x86 program executes:
+    - **x86 (32-bit)**: `int 0x80`
+    - **x86_64**: `syscall` instruction
+  </Step>
+  
+  <Step title="Interrupt Handler">
+    The emulator detects the syscall interrupt and invokes `handle_interrupt()`
+  </Step>
+  
+  <Step title="Syscall Dispatch">
+    The syscall number (in `eax`/`rax`) indexes into the syscall table to find the handler function
+  </Step>
+  
+  <Step title="Argument Extraction">
+    Arguments are read from registers:
+    - **x86**: `ebx, ecx, edx, esi, edi, ebp`
+    - **x86_64**: `rdi, rsi, rdx, r10, r8, r9`
+  </Step>
+  
+  <Step title="Handler Execution">
+    The handler function executes, potentially calling iOS APIs or emulating behavior
+  </Step>
+  
+  <Step title="Result Return">
+    The return value is written to `eax`/`rax` and control returns to the emulated program
+  </Step>
+</Steps>
+
+## Interrupt Handling
+
+The main interrupt dispatcher handles syscalls and other interrupts:
+
+```c title="kernel/calls.c:490"
+void handle_interrupt(int interrupt) {
+  struct cpu_state *cpu = &current->cpu;
+  
+#ifdef ISH_GUEST_64BIT
+  // x86_64: syscall instruction (INT_SYSCALL64)
+  if (interrupt == INT_SYSCALL64) {
+    unsigned syscall_num = cpu->rax;
+    
+    if (syscall_num >= NUM_SYSCALLS || syscall_table[syscall_num] == NULL) {
+      fprintf(stderr, "%d(%s) missing syscall %d\n",
+             current->pid, current->comm, syscall_num);
+      cpu->rax = _ENOSYS;
+    } else {
+      STRACE("%d call %-3d ", current->pid, syscall_num);
+      
+      // x86_64 argument order: rdi, rsi, rdx, r10, r8, r9
+      int64_t result = syscall_table[syscall_num](
+          cpu->rdi, cpu->rsi, cpu->rdx,
+          cpu->r10, cpu->r8, cpu->r9);
+      
+      // Sign-extend 32-bit error codes to 64-bit
+      if ((uint64_t)result >= 0xFFFFF001ULL && 
+          (uint64_t)result <= 0xFFFFFFFFULL) {
+        result = (int64_t)(int32_t)(uint32_t)result;
+      }
+      
+      STRACE(" = 0x%llx\n", (unsigned long long)result);
+      cpu->rax = result;
+    }
+  }
+#else
+  // x86: int 0x80 (INT_SYSCALL)
+  if (interrupt == INT_SYSCALL) {
+    unsigned syscall_num = cpu->eax;
+    
+    if (syscall_num >= NUM_SYSCALLS || syscall_table[syscall_num] == NULL) {
+      printk("%d(%s) missing syscall %d\n",
+            current->pid, current->comm, syscall_num);
+      cpu->eax = _ENOSYS;
+    } else {
+      STRACE("%d call %-3d ", current->pid, syscall_num);
+      
+      // x86 argument order: ebx, ecx, edx, esi, edi, ebp
+      int result = syscall_table[syscall_num](
+          cpu->ebx, cpu->ecx, cpu->edx,
+          cpu->esi, cpu->edi, cpu->ebp);
+      
+      STRACE(" = 0x%x\n", result);
+      cpu->eax = result;
+    }
+  }
+#endif
+  
+  // Handle other interrupts (page faults, illegal instructions, etc.)
+  // ...
+}
+```
+
+## Syscall Table
+
+iSH maintains separate syscall tables for x86 and x86_64:
+
+<Tabs>
+  <Tab title="x86_64 Table">
+    ```c title="kernel/calls.c:26"
+    syscall_t syscall_table[] = {
+        [0] = (syscall_t)sys_read,
+        [1] = (syscall_t)sys_write,
+        [2] = (syscall_t)sys_open,
+        [3] = (syscall_t)sys_close,
+        [4] = (syscall_t)sys_stat64,
+        [5] = (syscall_t)sys_fstat64,
+        [6] = (syscall_t)sys_lstat64,
+        [7] = (syscall_t)sys_poll,
+        [8] = (syscall_t)sys_lseek,
+        [9] = (syscall_t)sys_mmap64,
+        [10] = (syscall_t)sys_mprotect,
+        [11] = (syscall_t)sys_munmap,
+        [12] = (syscall_t)sys_brk,
+        // ... 400+ syscalls
+    };
+    ```
+    
+    x86_64 uses the standard Linux x86_64 syscall numbers.
+  </Tab>
+  
+  <Tab title="x86 Table">
+    ```c title="kernel/calls.c:251"
+    syscall_t syscall_table[] = {
+        [1] = (syscall_t)sys_exit,
+        [2] = (syscall_t)sys_fork,
+        [3] = (syscall_t)sys_read,
+        [4] = (syscall_t)sys_write,
+        [5] = (syscall_t)sys_open,
+        [6] = (syscall_t)sys_close,
+        [7] = (syscall_t)sys_waitpid,
+        // ... uses legacy syscall numbers
+    };
+    ```
+    
+    x86 uses the legacy int 0x80 syscall numbers.
+  </Tab>
+</Tabs>
+
+<Info>
+  The syscall tables use sparse arrays - unimplemented syscalls are `NULL` and return `-ENOSYS`.
+</Info>
+
+## Syscall Categories
+
+### Process Management
+
+<AccordionGroup>
+  <Accordion title="Process Lifecycle">
+    ```c title="kernel/calls.h:31"
+    dword_t sys_fork(void);
+    dword_t sys_vfork(void);
+    dword_t sys_clone(dword_t flags, addr_t stack, addr_t ptid, 
+                     addr_t tls, addr_t ctid);
+    dword_t sys_execve(addr_t file, addr_t argv, addr_t envp);
+    dword_t sys_exit(dword_t status);
+    dword_t sys_exit_group(dword_t status);
+    ```
+    
+    - **fork/vfork/clone**: Create new processes (mapped to iOS task creation)
+    - **execve**: Replace process image (loads new binary)
+    - **exit**: Terminate process
+  </Accordion>
+  
+  <Accordion title="Process Information">
+    ```c title="kernel/calls.h:201"
+    pid_t_ sys_getpid(void);
+    pid_t_ sys_gettid(void);
+    pid_t_ sys_getppid(void);
+    pid_t_ sys_getpgid(pid_t_ pid);
+    dword_t sys_setpgid(pid_t_ pid, pid_t_ pgid);
+    ```
+    
+    - **getpid/gettid**: Get process/thread ID
+    - **getppid**: Get parent process ID
+    - **getpgid/setpgid**: Process group management
+  </Accordion>
+  
+  <Accordion title="Waiting">
+    ```c title="kernel/calls.h:44"
+    dword_t sys_wait4(pid_t_ pid, addr_t status_addr, 
+                     dword_t options, addr_t rusage_addr);
+    dword_t sys_waitid(int_t idtype, pid_t_ id, 
+                      addr_t info_addr, int_t options);
+    dword_t sys_waitpid(pid_t_ pid, addr_t status_addr, dword_t options);
+    ```
+    
+    Wait for child processes to change state.
+  </Accordion>
+</AccordionGroup>
+
+### Memory Management
+
+```c title="kernel/calls.h:48"
+// Heap management
+addr_t sys_brk(addr_t new_brk);
+
+// Memory mapping
+addr_t sys_mmap2(addr_t addr, dword_t len, dword_t prot, 
+                dword_t flags, fd_t fd_no, dword_t offset);
+int_t sys_munmap(addr_t addr, addr_t len);
+int_t sys_mprotect(addr_t addr, addr_t len, int_t prot);
+addr_t sys_mremap(addr_t addr, addr_t old_len, addr_t new_len, dword_t flags);
+
+// Memory advice
+dword_t sys_madvise(addr_t addr, dword_t len, dword_t advice);
+int_t sys_mlock(addr_t addr, dword_t len);
+int_t sys_msync(addr_t addr, dword_t len, int_t flags);
+```
+
+<Note>
+  Memory management syscalls are critical for performance. iSH uses `mmap()` to create memory regions that can be efficiently accessed by the emulator.
+</Note>
+
+### File Operations
+
+<Tabs>
+  <Tab title="File I/O">
+    ```c title="kernel/calls.h:77"
+    // Basic I/O
+    dword_t sys_read(fd_t fd_no, addr_t buf_addr, dword_t size);
+    dword_t sys_write(fd_t fd_no, addr_t buf_addr, dword_t size);
+    dword_t sys_readv(fd_t fd_no, addr_t iovec_addr, dword_t iovec_count);
+    dword_t sys_writev(fd_t fd_no, addr_t iovec_addr, dword_t iovec_count);
+    
+    // Positioned I/O
+    dword_t sys_pread(fd_t f, addr_t buf_addr, dword_t buf_size, off_t_ off);
+    dword_t sys_pwrite(fd_t f, addr_t buf_addr, dword_t size, off_t_ off);
+    
+    // Seeking
+    dword_t sys_lseek(fd_t f, dword_t off, dword_t whence);
+    ```
+  </Tab>
+  
+  <Tab title="File Metadata">
+    ```c title="kernel/calls.h:150"
+    // Stat operations
+    dword_t sys_stat64(addr_t path_addr, addr_t statbuf_addr);
+    dword_t sys_lstat64(addr_t path_addr, addr_t statbuf_addr);
+    dword_t sys_fstat64(fd_t fd_no, addr_t statbuf_addr);
+    dword_t sys_fstatat64(fd_t at, addr_t path_addr, 
+                         addr_t statbuf_addr, dword_t flags);
+    
+    // Permission changes
+    dword_t sys_chmod(addr_t path_addr, dword_t mode);
+    dword_t sys_fchmod(fd_t f, dword_t mode);
+    dword_t sys_chown32(addr_t path_addr, uid_t_ owner, uid_t_ group);
+    dword_t sys_fchown32(fd_t f, dword_t owner, dword_t group);
+    ```
+  </Tab>
+  
+  <Tab title="Directory Operations">
+    ```c title="kernel/calls.h:148"
+    // Directory reading
+    int_t sys_getdents(fd_t f, addr_t dirents, dword_t count);
+    int_t sys_getdents64(fd_t f, addr_t dirents, dword_t count);
+    
+    // Directory management
+    dword_t sys_mkdir(addr_t path_addr, mode_t_ mode);
+    dword_t sys_mkdirat(fd_t at_f, addr_t path_addr, mode_t_ mode);
+    dword_t sys_rmdir(addr_t path_addr);
+    ```
+  </Tab>
+  
+  <Tab title="File Manipulation">
+    ```c title="kernel/calls.h:132"
+    fd_t sys_open(addr_t path_addr, dword_t flags, mode_t_ mode);
+    fd_t sys_openat(fd_t at, addr_t path_addr, dword_t flags, mode_t_ mode);
+    dword_t sys_close(fd_t fd);
+    
+    dword_t sys_link(addr_t src_addr, addr_t dst_addr);
+    dword_t sys_unlink(addr_t path_addr);
+    dword_t sys_rename(addr_t src_addr, addr_t dst_addr);
+    dword_t sys_symlink(addr_t target_addr, addr_t link_addr);
+    dword_t sys_readlink(addr_t path, addr_t buf, dword_t bufsize);
+    ```
+  </Tab>
+</Tabs>
+
+### Network Operations
+
+Network syscalls are translated to iOS/Darwin socket APIs:
+
+```c
+// Socket creation and management
+int_t sys_socket(int_t domain, int_t type, int_t protocol);
+int_t sys_bind(fd_t sock, addr_t addr_addr, dword_t addr_len);
+int_t sys_listen(fd_t sock, int_t backlog);
+int_t sys_accept(fd_t sock, addr_t addr_addr, addr_t len_addr);
+int_t sys_connect(fd_t sock, addr_t addr_addr, dword_t addr_len);
+
+// Data transfer
+dword_t sys_sendto(fd_t sock, addr_t buf_addr, dword_t len, 
+                  dword_t flags, addr_t addr_addr, dword_t addr_len);
+dword_t sys_recvfrom(fd_t sock, addr_t buf_addr, dword_t len,
+                    dword_t flags, addr_t addr_addr, addr_t addr_len_addr);
+
+// Socket options
+int_t sys_getsockopt(fd_t sock, int_t level, int_t option,
+                    addr_t value_addr, addr_t len_addr);
+int_t sys_setsockopt(fd_t sock, int_t level, int_t option,
+                    addr_t value_addr, dword_t len);
+```
+
+## Error Handling
+
+Linux error codes are mapped to their iSH equivalents:
+
+```c title="kernel/errno.c:6"
+int err_map(int err) {
+    switch (err) {
+        case EPERM: return _EPERM;
+        case ENOENT: return _ENOENT;
+        case ESRCH: return _ESRCH;
+        case EINTR: return _EINTR;
+        case EIO: return _EIO;
+        // ... 90+ error codes
+        default:
+            printk("unknown error %d\n", err);
+            return -(err | 0x1000);  // Mark unknown errors
+    }
+}
+
+int errno_map() {
+    // Special handling for EPIPE - send SIGPIPE
+    if (errno == EPIPE)
+        send_signal(current, SIGPIPE_, SIGINFO_NIL);
+    
+    return err_map(errno);
+}
+```
+
+<Warning>
+  Error codes are returned as **negative values** in syscalls. A return value of `-ENOENT` means "file not found".
+</Warning>
+
+## User Memory Access
+
+Syscalls need to safely access user memory:
+
+```c title="kernel/calls.h:19"
+// Read data from user space
+int must_check user_read(addr_t addr, void *buf, size_t count);
+
+// Write data to user space
+int must_check user_write(addr_t addr, const void *buf, size_t count);
+
+// Read a string from user space
+int must_check user_read_string(addr_t addr, char *buf, size_t max);
+
+// Convenience macros for single values
+#define user_get(addr, var) user_read(addr, &(var), sizeof(var))
+#define user_put(addr, var) user_write(addr, &(var), sizeof(var))
+```
+
+<Info>
+  These functions handle address translation and bounds checking. They return error codes if the memory access fails (e.g., accessing unmapped memory).
+</Info>
+
+## Platform-Specific Translation
+
+Some syscalls require platform-specific handling:
+
+<CodeGroup>
+```c iOS/Darwin Translation
+// Example: stat() on iOS/Darwin
+int realfs_stat(struct mount *mount, const char *path, 
+               struct statbuf *fake_stat) {
+    struct stat real_stat;
+    
+    // Use Darwin's fstatat()
+    if (fstatat(mount->root_fd, fix_path(path), 
+               &real_stat, AT_SYMLINK_NOFOLLOW) < 0)
+        return errno_map();
+    
+    // Translate Darwin stat to Linux stat
+    copy_stat(fake_stat, &real_stat);
+    return 0;
+}
+```
+
+```c Direct Emulation
+// Example: brk() - fully emulated
+addr_t sys_brk(addr_t new_brk) {
+    // No iOS equivalent, implement heap management
+    struct mem *mem = current->mem;
+    
+    if (new_brk == 0)
+        return mem->brk;
+    
+    if (new_brk < mem->start_brk)
+        return mem->brk;
+    
+    // Expand or shrink the heap
+    // ...
+    
+    mem->brk = new_brk;
+    return new_brk;
+}
+```
+</CodeGroup>
+
+## Special Syscalls
+
+### Stub Syscalls
+
+Some syscalls are stubbed out:
+
+```c
+// Returns -ENOSYS (not implemented)
+dword_t syscall_stub(void) { return _ENOSYS; }
+
+// Returns success without doing anything
+dword_t syscall_success_stub(void) { return 0; }
+
+// Returns -ENOSYS but doesn't log (for optional syscalls)
+dword_t syscall_silent_stub(void) { return _ENOSYS; }
+```
+
+Examples:
+- `io_uring_*` - Modern async I/O (not needed)
+- `membarrier` - Memory ordering (unsafe to stub, but marked silent)
+- `setfsuid/setfsgid` - Filesystem UID/GID (not relevant on iOS)
+
+### Signal Handling
+
+```c
+dword_t sys_rt_sigaction(int_t signum, addr_t action_addr, 
+                        addr_t oldaction_addr, dword_t sigset_size);
+dword_t sys_rt_sigprocmask(dword_t how, addr_t set_addr, 
+                          addr_t oldset_addr, dword_t sigset_size);
+dword_t sys_kill(pid_t_ pid, dword_t sig);
+```
+
+Signals are fully emulated to provide proper Unix signal semantics.
+
+## Syscall Debugging
+
+Enable syscall tracing with the `strace` log channel:
+
+```bash
+# In Xcode
+ISH_LOG="strace"
+
+# With Meson
+meson configure -Dlog="strace"
+```
+
+This logs all syscalls:
+
+```
+42 call 5   (open) "/etc/passwd" 0 0 = 3
+42 call 3   (read) 3 0x7fff1234 1024 = 256
+42 call 6   (close) 3 = 0
+```
+
+## Performance Considerations
+
+<AccordionGroup>
+  <Accordion title="Syscall Overhead">
+    Each syscall requires:
+    1. Interrupt detection
+    2. Register save/restore
+    3. Argument marshalling
+    4. User memory access (with bounds checking)
+    5. Platform translation
+    
+    This is much slower than native syscalls, so minimizing syscall frequency is important.
+  </Accordion>
+  
+  <Accordion title="Memory Copying">
+    Data must be copied between emulated memory and host memory for most I/O operations. Large reads/writes can be slow.
+    
+    Use `readv`/`writev` or `mmap` for better performance with large data.
+  </Accordion>
+  
+  <Accordion title="File Descriptor Translation">
+    iSH maintains its own file descriptor table separate from iOS. Each FD operation requires a lookup in this table.
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="Emulation" icon="microchip" href="/architecture/emulation">
+    How the emulator invokes syscalls
+  </Card>
+  
+  <Card title="Filesystem" icon="folder-tree" href="/architecture/filesystem">
+    Filesystem syscall implementation
+  </Card>
+</CardGroup>

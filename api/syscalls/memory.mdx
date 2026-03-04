@@ -1,0 +1,344 @@
+---
+title: "Memory Management"
+description: "System calls for memory allocation, mapping, and protection"
+---
+
+## Memory Allocation
+
+### sys_brk
+
+Change data segment size.
+
+```c
+addr_t sys_brk(addr_t new_brk)
+```
+
+<ParamField path="new_brk" type="addr_t">
+  New program break address. If 0, returns current break without changing it.
+</ParamField>
+
+<ResponseField name="return" type="addr_t">
+  Returns the new program break address on success. Returns current break on failure.
+</ResponseField>
+
+**Description:**
+Adjusts the program break, which defines the end of the process's data segment. Increasing the break allocates memory, decreasing it deallocates memory.
+
+**Source:** kernel/calls.h:49, kernel/mmap.c
+
+**Error Behavior:**
+Returns current break address (without changing it) if:
+- Requested address would overlap existing mappings
+- System is out of memory
+
+---
+
+## Memory Mapping
+
+Syscalls for mapping files and anonymous memory into the process address space.
+
+### sys_mmap / sys_mmap2
+
+Map files or devices into memory.
+
+```c
+addr_t sys_mmap2(addr_t addr, dword_t len, dword_t prot, dword_t flags, 
+                 fd_t fd_no, dword_t offset)
+```
+
+<ParamField path="addr" type="addr_t">
+  Preferred starting address for the mapping. If 0, kernel chooses address. Must be page-aligned if MMAP_FIXED is set.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Length of mapping in bytes. Rounded up to page size.
+</ParamField>
+
+<ParamField path="prot" type="dword_t">
+  Memory protection flags:
+  - `PROT_READ` (0x1): Pages may be read
+  - `PROT_WRITE` (0x2): Pages may be written
+  - `PROT_EXEC` (0x4): Pages may be executed
+  - `PROT_NONE` (0x0): Pages may not be accessed
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Mapping flags:
+  - `MMAP_SHARED` (0x1): Share mapping with other processes
+  - `MMAP_PRIVATE` (0x2): Create copy-on-write private mapping
+  - `MMAP_FIXED` (0x10): Map at exact address, replacing existing mappings
+  - `MMAP_ANONYMOUS` (0x20): Mapping not backed by file (fd ignored)
+</ParamField>
+
+<ParamField path="fd_no" type="fd_t">
+  File descriptor to map. Ignored if MMAP_ANONYMOUS is set.
+</ParamField>
+
+<ParamField path="offset" type="dword_t">
+  Offset in file to start mapping, in pages for mmap2, in bytes for mmap64.
+</ParamField>
+
+<ResponseField name="return" type="addr_t">
+  Returns starting address of mapping on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EINVAL` (-22): Invalid parameters (len=0, unaligned addr with FIXED, invalid prot/flags)
+- `EBADF` (-9): Invalid file descriptor
+- `ENOMEM` (-12): Out of memory or address space
+- `ENODEV` (-19): File descriptor doesn't support mmap
+
+**Source:** kernel/calls.h:56, kernel/mmap.c:54
+
+**Note:** sys_mmap2 takes offset in pages, while sys_mmap64 (64-bit) takes offset in bytes.
+
+---
+
+### sys_munmap
+
+Unmap files or devices from memory.
+
+```c
+int_t sys_munmap(addr_t addr, addr_t len)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of region to unmap. Must be page-aligned.
+</ParamField>
+
+<ParamField path="len" type="addr_t">
+  Length of region to unmap in bytes. Rounded up to page size.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EINVAL` (-22): addr not page-aligned or len is 0
+
+**Description:**
+Unmaps the specified memory region. Subsequent references to unmapped pages will generate SIGSEGV.
+
+**Source:** kernel/calls.h:60, kernel/mmap.c:136
+
+---
+
+### sys_mprotect
+
+Change memory protection.
+
+```c
+int_t sys_mprotect(addr_t addr, addr_t len, int_t prot)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of region. Must be page-aligned.
+</ParamField>
+
+<ParamField path="len" type="addr_t">
+  Length of region in bytes. Rounded up to page size.
+</ParamField>
+
+<ParamField path="prot" type="int_t">
+  New protection flags (same as mmap: PROT_READ | PROT_WRITE | PROT_EXEC).
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EINVAL` (-22): Invalid parameters
+- `ENOMEM` (-12): Address range not mapped
+- `EACCES` (-13): Protection conflict with file mapping
+
+**Description:**
+Changes memory protection for pages in the specified range. All pages must be mapped.
+
+**Source:** kernel/calls.h:61
+
+---
+
+### sys_mremap
+
+Expand or shrink an existing memory mapping.
+
+```c
+addr_t sys_mremap(addr_t addr, addr_t old_len, addr_t new_len, dword_t flags)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of existing mapping. Must be page-aligned.
+</ParamField>
+
+<ParamField path="old_len" type="addr_t">
+  Current size of mapping in bytes.
+</ParamField>
+
+<ParamField path="new_len" type="addr_t">
+  Desired new size of mapping in bytes.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Remapping flags:
+  - `MREMAP_MAYMOVE` (0x1): Allow kernel to relocate mapping if necessary
+  - `MREMAP_FIXED` (0x2): Place mapping at specific address
+</ParamField>
+
+<ResponseField name="return" type="addr_t">
+  Returns address of resized mapping on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EINVAL` (-22): Invalid parameters (unaligned addr, zero length, invalid flags)
+- `EFAULT` (-14): Invalid existing mapping
+- `ENOMEM` (-12): Cannot expand mapping in place and MAYMOVE not set
+
+**Description:**
+Shrinking always succeeds. Expanding may fail if there's no contiguous space and MREMAP_MAYMOVE is not set.
+
+**Source:** kernel/calls.h:62, kernel/mmap.c:155
+
+---
+
+### sys_madvise
+
+Give advice about memory usage patterns.
+
+```c
+dword_t sys_madvise(addr_t addr, dword_t len, dword_t advice)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of region.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Length of region in bytes.
+</ParamField>
+
+<ParamField path="advice" type="dword_t">
+  Advice about memory usage:
+  - `MADV_NORMAL`: No special treatment
+  - `MADV_RANDOM`: Expect random page references
+  - `MADV_SEQUENTIAL`: Expect sequential page references
+  - `MADV_WILLNEED`: Expect access in near future
+  - `MADV_DONTNEED`: Don't expect access in near future
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Provides hints to kernel about memory usage patterns. Implementation may ignore advice.
+
+**Source:** kernel/calls.h:63
+
+---
+
+### sys_msync
+
+Synchronize a mapped region with filesystem.
+
+```c
+int_t sys_msync(addr_t addr, dword_t len, int_t flags)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of region to sync. Should be page-aligned.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Length of region in bytes.
+</ParamField>
+
+<ParamField path="flags" type="int_t">
+  Sync flags:
+  - `MS_ASYNC`: Schedule sync but return immediately
+  - `MS_SYNC`: Perform sync and wait for completion
+  - `MS_INVALIDATE`: Invalidate cached data
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Flushes changes to mapped files back to the filesystem.
+
+**Source:** kernel/calls.h:66
+
+---
+
+### sys_mlock
+
+Lock pages in memory.
+
+```c
+int_t sys_mlock(addr_t addr, dword_t len)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of region to lock.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Length of region in bytes.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Prevents pages in the specified range from being swapped out. In iSH (which doesn't swap), this is largely a no-op.
+
+**Source:** kernel/calls.h:65
+
+---
+
+## NUMA Memory Management
+
+### sys_mbind
+
+Set NUMA memory policy for a memory range.
+
+```c
+dword_t sys_mbind(addr_t addr, dword_t len, int_t mode, addr_t nodemask, 
+                  dword_t maxnode, uint_t flags)
+```
+
+<ParamField path="addr" type="addr_t">
+  Starting address of memory region.
+</ParamField>
+
+<ParamField path="len" type="dword_t">
+  Length of region in bytes.
+</ParamField>
+
+<ParamField path="mode" type="int_t">
+  Memory policy mode (MPOL_DEFAULT, MPOL_BIND, MPOL_INTERLEAVE, MPOL_PREFERRED).
+</ParamField>
+
+<ParamField path="nodemask" type="addr_t">
+  Bitmask of NUMA nodes.
+</ParamField>
+
+<ParamField path="maxnode" type="dword_t">
+  Maximum node number + 1.
+</ParamField>
+
+<ParamField path="flags" type="uint_t">
+  Policy flags.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+Controls NUMA memory allocation policy. In iSH (non-NUMA), this is typically ignored.
+
+**Source:** kernel/calls.h:64

@@ -1,0 +1,163 @@
+---
+title: Introduction to iSH
+description: A Linux shell environment running on iOS through x86 emulation and syscall translation
+---
+
+iSH is a project that brings a Linux shell environment to iOS devices by using usermode x86 emulation and syscall translation. It allows you to run a real Alpine Linux environment on your iPhone or iPad, complete with a package manager and access to thousands of Linux utilities.
+
+## What is iSH?
+
+iSH is not a remote shell or a simplified terminal emulator—it's a full Linux userspace environment running locally on your iOS device. The project emulates an x86 processor and translates Linux system calls to work within iOS's constraints, creating a genuine Linux experience in your pocket.
+
+<Info>
+iSH runs Alpine Linux, a security-oriented, lightweight Linux distribution that uses musl libc and busybox. This makes it perfect for resource-constrained environments like iOS.
+</Info>
+
+## Key features
+
+iSH provides a powerful set of capabilities that distinguish it from traditional iOS apps:
+
+<CardGroup cols={2}>
+  <Card title="Real Linux environment" icon="linux">
+    Run Alpine Linux with full access to the apk package manager and thousands of packages including Python, Node.js, git, vim, and more.
+  </Card>
+  
+  <Card title="x86 emulation" icon="microchip">
+    Uses a custom-built x86 emulator with a threaded code interpreter that provides 3-5x performance improvement over traditional switch dispatch.
+  </Card>
+  
+  <Card title="File system integration" icon="folder-tree">
+    Access iOS file system with fakefs, a custom filesystem that bridges Linux and iOS file operations using SQLite for metadata storage.
+  </Card>
+  
+  <Card title="Persistent storage" icon="database">
+    Your Linux environment persists across app restarts, maintaining installed packages, configurations, and files.
+  </Card>
+</CardGroup>
+
+## How it works
+
+iSH operates through several sophisticated layers that work together to create a Linux environment on iOS:
+
+### x86 emulation
+
+At its core, iSH uses a custom x86 emulator implemented in the `emu/` directory (see `emu/cpu.h:35`). The CPU state structure includes:
+
+- General purpose registers (eax, ebx, ecx, edx, esi, edi, esp, ebp)
+- Instruction pointer (eip) tracking program execution
+- CPU flags (zero, sign, carry, overflow, parity, auxiliary)
+- FPU registers for floating-point operations
+- MMX and XMM registers for SIMD operations
+
+<Note>
+The interpreter uses a technique called "threaded code" where gadgets (small pieces of assembly) are linked together through tail calls, providing significantly better performance than a traditional switch-based interpreter.
+</Note>
+
+### Syscall translation
+
+Linux applications make system calls to interact with the kernel. iSH intercepts these calls and translates them to work within iOS's sandbox (see `kernel/calls.h` and `kernel/init.c:12`). Key syscalls include:
+
+- File operations: open, read, write, close, stat
+- Process management: fork, exec, exit, wait
+- Memory management: mmap, munmap, brk
+- Network operations: socket, bind, connect, send, recv
+
+### File system layer
+
+iSH implements a custom filesystem called "fakefs" (see `fs/fake.c:24`) that:
+
+- Stores actual file data using iOS's file system
+- Maintains Linux metadata (permissions, ownership, device numbers) in a SQLite database
+- Supports Linux-specific features like hard links, device files, and UNIX permissions
+- Integrates with iOS's Files app through a File Provider extension
+
+## Architecture overview
+
+The iSH architecture consists of several key components:
+
+<Steps>
+  <Step title="Application layer">
+    The iOS app (written in Objective-C) provides the terminal interface, manages app lifecycle, and handles iOS integration points like the keyboard, clipboard, and file sharing.
+  </Step>
+  
+  <Step title="Kernel layer">
+    Implements Linux kernel functionality including process management, signal handling, memory management, and file descriptors. Located in the `kernel/` directory.
+  </Step>
+  
+  <Step title="File system layer">
+    Multiple filesystem implementations including fakefs (persistent storage), procfs (process information), devfs (device files), and tmpfs (temporary files).
+  </Step>
+  
+  <Step title="Emulation layer">
+    The x86 CPU emulator with MMU, TLB, FPU support, and instruction decoder. This is where Linux x86 binaries actually execute.
+  </Step>
+</Steps>
+
+## Use cases
+
+iSH opens up numerous possibilities for iOS users:
+
+**Development on the go**
+- Write and test Python, Node.js, Ruby, or shell scripts
+- Use git for version control
+- Edit code with vim, nano, or emacs
+- Run development tools and utilities
+
+**System administration**
+- SSH into remote servers
+- Run network diagnostics (ping, traceroute, netstat)
+- Process text files with grep, sed, awk
+- Automate tasks with shell scripts
+
+**Education and learning**
+- Learn Linux commands and shell scripting
+- Experiment with programming languages
+- Practice system administration concepts
+- Understand operating system internals
+
+<Warning>
+While iSH provides a real Linux environment, it runs within iOS's sandbox and has certain limitations. Network access requires iOS permissions, and some system-level operations that would require root on a real Linux system may not work.
+</Warning>
+
+## What you can run
+
+iSH supports a wide range of Linux software through the Alpine package manager:
+
+- **Languages**: Python, Node.js, Ruby, Perl, Lua, PHP
+- **Editors**: vim, nano, emacs, ed
+- **Version control**: git, mercurial
+- **Build tools**: gcc, clang, make, cmake
+- **Utilities**: curl, wget, rsync, ssh, tmux, screen
+- **Shells**: bash, zsh, fish (in addition to the default ash)
+
+## Limitations
+
+As an emulated Linux environment running within iOS's sandbox, iSH has some constraints:
+
+- Performance is slower than native execution due to emulation overhead
+- Some syscalls are not fully implemented
+- No kernel modules or device driver support
+- Limited access to iOS hardware features
+- Some complex applications may not work correctly
+
+## Community and support
+
+iSH is an open-source project with an active community:
+
+- **GitHub**: [github.com/ish-app/ish](https://github.com/ish-app/ish)
+- **Discord**: Active community for help and discussion
+- **Wiki**: Tutorials and troubleshooting guides
+
+## Next steps
+
+Ready to get started with iSH?
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Learn how to install iSH from the App Store or TestFlight beta
+  </Card>
+  
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Get up and running with your first commands and packages
+  </Card>
+</CardGroup>

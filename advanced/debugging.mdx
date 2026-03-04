@@ -1,0 +1,467 @@
+---
+title: Debugging
+description: Tools and techniques for debugging the iSH emulator
+---
+
+## Overview
+
+iSH includes several tools and facilities for debugging both the emulator itself and the code running inside it. This guide covers debugger scripts, crash handlers, state inspection, and step-debugging tools.
+
+## Debugger Scripts
+
+iSH provides helper scripts for GDB and LLDB that enhance the debugging experience.
+
+### GDB Script (ish-gdb.gdb)
+
+Location: `ish-gdb.gdb` (symlinked to build directory)
+
+```gdb:ish-gdb.gdb
+handle SIGUSR1 noprint pass
+handle SIGTTIN noprint pass
+handle SIGPIPE noprint pass
+set print thread-events off
+
+define hook-run
+    python
+import subprocess
+if subprocess.call('ninja') != 0:
+    raise gdb.CommandError('compilation failed')
+    end
+end
+
+define hook-stop
+    python
+try:
+    symtab = gdb.selected_frame().find_sal().symtab
+except:
+    pass
+else:
+    if symtab is not None and symtab.filename.endswith('.S'):
+        gdb.execute('set disassemble-next-line on')
+    else:
+        gdb.execute('set disassemble-next-line auto')
+    end
+end
+```
+
+**Features:**
+
+1. **Signal Handling**: Ignores common signals (SIGUSR1, SIGTTIN, SIGPIPE) that iSH uses internally
+2. **Auto-rebuild**: Automatically runs `ninja` before each run
+3. **Smart Disassembly**: Enables disassembly view when stepping through assembly files (`.S`)
+
+**Usage:**
+
+```bash
+cd build
+gdb ./ish
+source ish-gdb.gdb
+run -f alpine /bin/sh
+```
+
+### LLDB Script (ish-lldb.lldb)
+
+Location: `ish-lldb.lldb`
+
+```lldb:ish-lldb.lldb
+process handle -n 0 -p 1 -s 0 SIGUSR1 SIGTTIN SIGPIPE
+```
+
+**Features:**
+
+- Configures LLDB to pass through common signals without stopping
+
+**Usage:**
+
+```bash
+cd build
+lldb ./ish
+command source ish-lldb.lldb
+run -f alpine /bin/sh
+```
+
+## Crash Handler
+
+iSH includes a built-in crash handler that captures useful debugging information when the emulator crashes.
+
+### Implementation
+
+From `main.c`:
+
+```c:main.c
+static void crash_handler(int sig) {
+    void *array[50];
+    int size;
+    fprintf(stderr, "\n=== Signal %d caught ===\n", sig);
+    size = backtrace(array, 50);
+    fprintf(stderr, "Backtrace (%d frames):\n", size);
+    backtrace_symbols_fd(array, size, 2);
+    if (current) {
+        struct cpu_state *cpu = &current->cpu;
+#ifdef ISH_GUEST_64BIT
+        fprintf(stderr, "x86_64 CPU state at crash:\n");
+        fprintf(stderr, "  RIP=0x%llx RSP=0x%llx RBP=0x%llx\n",
+                (unsigned long long)cpu->rip, (unsigned long long)cpu->rsp,
+                (unsigned long long)cpu->rbp);
+        fprintf(stderr, "  RAX=0x%llx RBX=0x%llx RCX=0x%llx RDX=0x%llx\n",
+                (unsigned long long)cpu->rax, (unsigned long long)cpu->rbx,
+                (unsigned long long)cpu->rcx, (unsigned long long)cpu->rdx);
+        fprintf(stderr, "  RSI=0x%llx RDI=0x%llx\n",
+                (unsigned long long)cpu->rsi, (unsigned long long)cpu->rdi);
+#else
+        fprintf(stderr, "x86 CPU state at crash:\n");
+        fprintf(stderr, "  EIP=0x%x ESP=0x%x EBP=0x%x\n",
+                cpu->eip, cpu->esp, cpu->ebp);
+        fprintf(stderr, "  EAX=0x%x EBX=0x%x ECX=0x%x EDX=0x%x\n",
+                cpu->eax, cpu->ebx, cpu->ecx, cpu->edx);
+        fprintf(stderr, "  ESI=0x%x EDI=0x%x\n",
+                cpu->esi, cpu->edi);
+#endif
+    }
+    fprintf(stderr, "======================\n");
+    _exit(128 + sig);
+}
+
+int main(int argc, char *const argv[]) {
+    signal(SIGSEGV, crash_handler);
+    signal(SIGBUS, crash_handler);
+    signal(SIGABRT, crash_handler);
+    signal(SIGILL, crash_handler);
+    signal(SIGFPE, crash_handler);
+    // ...
+}
+```
+
+### Example Crash Output
+
+```
+=== Signal 11 caught ===
+Backtrace (15 frames):
+./ish[0x4023a0]
+/lib/x86_64-linux-gnu/libc.so.6(+0x3c0f0)[0x7f8b3c0f0]
+./ish[0x401234]
+./ish[0x405678]
+x86 CPU state at crash:
+  EIP=0x8048a34 ESP=0xbffff7a0 EBP=0xbffff7b8
+  EAX=0x00000000 EBX=0x08048000 ECX=0x00000001 EDX=0x00000000
+  ESI=0xbffff800 EDI=0x00000000
+======================
+```
+
+**Information Provided:**
+
+1. **Signal Number**: Type of crash (11 = SIGSEGV, 6 = SIGABRT, etc.)
+2. **Native Backtrace**: Stack trace of the emulator process
+3. **Guest CPU State**: x86 register state at the time of crash
+   - Instruction pointer (EIP/RIP)
+   - Stack pointer (ESP/RSP)
+   - General-purpose registers
+
+## CPU State Inspection
+
+### In GDB
+
+Access the emulated CPU state:
+
+```gdb
+# Break on a specific instruction address
+break cpu_run_to_interrupt
+run
+
+# Inspect CPU state
+p *cpu
+p/x cpu->eip
+p/x cpu->regs[0]  # EAX
+p/x cpu->eflags
+
+# Pretty-print all registers
+define print_cpu
+  printf "EIP=0x%08x\n", cpu->eip
+  printf "EAX=0x%08x EBX=0x%08x ECX=0x%08x EDX=0x%08x\n", \
+    cpu->eax, cpu->ebx, cpu->ecx, cpu->edx
+  printf "ESP=0x%08x EBP=0x%08x ESI=0x%08x EDI=0x%08x\n", \
+    cpu->esp, cpu->ebp, cpu->esi, cpu->edi
+end
+```
+
+### In LLDB
+
+```lldb
+# Break and inspect
+breakpoint set -n cpu_run_to_interrupt
+run
+
+# View CPU state
+frame variable cpu
+print cpu->eip
+print cpu->regs
+memory read -s4 -c8 &cpu->regs  # Read all 8 registers
+```
+
+### CPU State Structure
+
+From `emu/cpu.h`:
+
+```c
+struct cpu_state {
+    struct mmu *mmu;
+    long cycle;
+
+    // General registers (32-bit mode)
+    union {
+        struct {
+            _REGX(a);  // EAX/AX/AL/AH
+            _REGX(c);  // ECX/CX/CL/CH
+            _REGX(d);  // EDX/DX/DL/DH
+            _REGX(b);  // EBX/BX/BL/BH
+            _REG(sp);  // ESP/SP
+            _REG(bp);  // EBP/BP
+            _REG(si);  // ESI/SI
+            _REG(di);  // EDI/DI
+        };
+        dword_t regs[8];
+    };
+
+    dword_t eip;  // Instruction pointer
+
+    // Flags
+    dword_t eflags;
+    // ... (flag bits and lazy evaluation fields)
+
+    // FPU state
+    union mm_reg mm[8];
+    union xmm_reg xmm[8];
+    float80 fp[8];
+    word_t fsw, fcw;
+
+    // TLS
+    word_t gs;
+    addr_t tls_ptr;
+};
+```
+
+## ptraceomatic - Step Debugging Tool
+
+Location: `tools/ptraceomatic.c`
+
+**Purpose**: Runs a program natively using ptrace and simultaneously in iSH, comparing register state at each instruction.
+
+### Requirements
+
+- 64-bit Linux 4.11 or later
+- ptrace support
+
+### How It Works
+
+From the source:
+
+```c:tools/ptraceomatic.c
+// Fun little utility that single-steps a program using ptrace and
+// simultaneously runs the program in ish, and asserts that everything's
+// working the same.
+
+// returns 1 for a signal stop
+static inline int step(int pid) {
+    trycall(ptrace(PTRACE_SINGLESTEP, pid, NULL, 0), "ptrace step");
+    int status;
+    trycall(waitpid(pid, &status, 0), "wait step");
+    if (WIFSTOPPED(status) && WSTOPSIG(status) != SIGTRAP) {
+        int signal = WSTOPSIG(status);
+        printk("child received signal %d\n", signal);
+        // a signal arrived, we now have to actually deliver it
+        trycall(ptrace(PTRACE_SINGLESTEP, pid, NULL, signal), "ptrace step");
+        trycall(waitpid(pid, &status, 0), "wait step");
+        return 1;
+    }
+    return 0;
+}
+```
+
+### Building
+
+```bash
+cd build
+ninja tools/ptraceomatic
+```
+
+### Usage
+
+```bash
+# Run a simple program and compare execution
+./tools/ptraceomatic ./ish -f alpine /bin/true
+
+# The tool will:
+# 1. Run /bin/true natively with ptrace
+# 2. Single-step through each instruction
+# 3. Run the same in iSH
+# 4. Compare register state after each instruction
+# 5. Report any mismatches
+```
+
+### Use Cases
+
+- Validating emulator accuracy
+- Finding instruction implementation bugs
+- Debugging divergent execution paths
+- Regression testing
+
+## Exception Handling (iOS)
+
+For iOS builds, iSH includes exception handling:
+
+```objc:app/ExceptionExfiltrator.h
+void iSHExceptionHandler(NSException *exception);
+```
+
+This handler catches Objective-C exceptions and provides debugging information on iOS where traditional crash handlers behave differently.
+
+## Debugging Techniques
+
+### Debugging Gadget Execution
+
+Set breakpoints on gadget functions:
+
+```gdb
+# Break when a specific gadget is executed
+break gadget_mov
+break gadget_add_reg_reg
+
+# Conditional breakpoint
+break gadget_interrupt if cpu->trapno == INT_UNDEFINED
+```
+
+### Debugging System Calls
+
+Trace system call execution:
+
+```gdb
+# Break on syscall entry
+break do_syscall
+
+# View syscall number and arguments
+commands
+  printf "syscall %d\n", syscall_num
+  continue
+end
+```
+
+### Memory Debugging
+
+Inspect guest memory:
+
+```gdb
+# Read guest memory at address 0x8048000
+break cpu_run_to_interrupt
+run
+set $addr = 0x8048000
+set $mmu = cpu->mmu
+# Use TLB functions to read guest memory
+call mem_ptr(cpu->mmu, $addr, MEM_READ)
+```
+
+### Logging + Debugging Combo
+
+Combine logging with breakpoints:
+
+```bash
+# Build with strace logging
+meson configure -Dlog="strace"
+ninja
+
+# Run in debugger
+gdb ./ish
+break do_syscall if syscall_num == 120  # clone
+run -f alpine /bin/sh
+```
+
+### Debugging JIT/Gadget Generation
+
+Break during code generation:
+
+```gdb
+break gen_step
+break gen_end
+
+# Inspect generated gadget chain
+commands
+  printf "Block: %p, size: %d\n", state->block, state->size
+  x/10gx state->block->code
+  continue
+end
+```
+
+## Common Debugging Scenarios
+
+### Scenario 1: Undefined Instruction
+
+```gdb
+break gadget_interrupt if trapno == INT_UNDEFINED
+commands
+  printf "Undefined instruction at EIP=0x%08x\n", cpu->eip
+  # Dump instruction bytes
+  x/10xb cpu->eip
+  # Check what instruction this is
+  disassemble cpu->eip,cpu->eip+10
+end
+```
+
+### Scenario 2: Segfault
+
+```gdb
+break handle_read_miss
+break handle_write_miss
+commands
+  printf "Memory access fault at 0x%08x\n", addr
+  backtrace 5
+end
+```
+
+### Scenario 3: Infinite Loop Detection
+
+```gdb
+# Set a counter and break after N iterations
+set $count = 0
+break fiber_ret_chain
+commands
+  set $count = $count + 1
+  if $count > 10000
+    printf "Possible infinite loop at EIP=0x%08x\n", cpu->eip
+    # Stop the program
+    signal SIGINT
+  end
+  continue
+end
+```
+
+## Debugging Build Issues
+
+### Assembly Issues
+
+When gadget assembly fails to compile:
+
+```bash
+# Get preprocessed assembly
+cd build
+ninja -v 2>&1 | grep "entry.S"
+# Copy the command and add -E to see preprocessed output
+
+# Examine generated offsets
+cat cpu-offsets.h
+```
+
+### Linking Issues
+
+```bash
+# Verbose linker output
+cd build
+ninja -v
+
+# Check symbol visibility
+nm libish_emu.a | grep gadget_
+```
+
+## See Also
+
+- [Logging](/advanced/logging) - Enable debug logging channels
+- [Interpreter](/advanced/interpreter) - Understanding gadget execution
+- [64-bit Port](/advanced/64bit-port) - 64-bit specific debugging

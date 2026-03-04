@@ -1,0 +1,382 @@
+---
+title: Building the CLI Tool
+description: Build and run the iSH command-line tool for testing and development
+---
+
+The iSH CLI tool is a command-line version of iSH that's useful for testing and debugging without needing iOS or Xcode. It runs on Linux and macOS.
+
+## Prerequisites
+
+Ensure you have all [build requirements](/building/requirements) installed:
+
+- Python 3 with Meson
+- Ninja
+- Clang and LLD
+- sqlite3
+- libarchive
+
+## Building the CLI Tool
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone with submodules to get all dependencies:
+    
+    ```bash
+    git clone --recurse-submodules https://github.com/ish-app/ish.git
+    cd ish
+    ```
+    
+    If already cloned:
+    
+    ```bash
+    git submodule update --init
+    ```
+  </Step>
+
+  <Step title="Set up the build directory">
+    Use Meson to configure the build:
+    
+    ```bash
+    meson build
+    ```
+    
+    This creates a `build/` directory with the build configuration.
+    
+    <Tip>
+      To configure with custom options:
+      ```bash
+      meson build -Dlog="strace verbose" -Dguest_arch=x86_64
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Build with Ninja">
+    Change to the build directory and run Ninja:
+    
+    ```bash
+    cd build
+    ninja
+    ```
+    
+    This compiles the iSH executable and all tools.
+  </Step>
+</Steps>
+
+## Creating an Alpine Filesystem
+
+To run the iSH CLI tool, you need an Alpine Linux root filesystem:
+
+<Steps>
+  <Step title="Download Alpine minirootfs">
+    Download the Alpine minirootfs tarball for i386 from the [Alpine downloads page](https://alpinelinux.org/downloads/).
+    
+    ```bash
+    # Example: Download Alpine 3.19 minirootfs
+    wget https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86/alpine-minirootfs-3.19.0-x86.tar.gz
+    ```
+  </Step>
+
+  <Step title="Run fakefsify">
+    Use the `fakefsify` tool to create a filesystem from the tarball:
+    
+    ```bash
+    ./tools/fakefsify alpine-minirootfs-3.19.0-x86.tar.gz alpine
+    ```
+    
+    This creates an `alpine/` directory with the extracted filesystem.
+    
+    <Note>
+      If `tools/fakefsify` doesn't exist, libarchive wasn't found during build configuration. See [build requirements](/building/requirements) for installation instructions.
+    </Note>
+  </Step>
+</Steps>
+
+## Running iSH
+
+Once you have a filesystem set up, run iSH:
+
+```bash
+./ish -f alpine /bin/sh
+```
+
+This starts a shell inside the Alpine Linux environment.
+
+### Command-Line Options
+
+```bash
+./ish -f <filesystem_dir> <command> [args...]
+```
+
+- `-f <filesystem_dir>`: Path to the root filesystem directory
+- `<command>`: Command to execute (e.g., `/bin/sh`, `/bin/ls`)
+- `[args...]`: Arguments to pass to the command
+
+### Example Usage
+
+```bash
+# Start an interactive shell
+./ish -f alpine /bin/sh
+
+# Run a specific command
+./ish -f alpine /bin/ls -la /etc
+
+# Run apk package manager
+./ish -f alpine /sbin/apk --version
+```
+
+## Build Configuration Options
+
+You can customize the build with Meson options:
+
+### Configure After Initial Build
+
+```bash
+cd build
+meson configure -Doption=value
+ninja
+```
+
+### Common Options
+
+**Enable logging channels:**
+```bash
+meson configure -Dlog="strace verbose"
+```
+
+Available channels:
+- `strace`: Log system calls
+- `instr`: Log every instruction (very slow)
+- `verbose`: General debug output
+
+**Change guest architecture:**
+```bash
+meson configure -Dguest_arch=x86_64
+```
+
+Options: `x86` (default), `x86_64`
+
+**Change emulation engine:**
+```bash
+meson configure -Dengine=unicorn
+```
+
+Options: `asbestos` (default), `unicorn`
+
+**Change kernel mode:**
+```bash
+meson configure -Dkernel=linux
+```
+
+Options: `ish` (default), `linux`
+
+### View Current Configuration
+
+```bash
+cd build
+meson configure
+```
+
+## Debugging with ptraceomatic
+
+<Note>
+  ptraceomatic only works on 64-bit Linux 4.11 or later.
+</Note>
+
+The `ptraceomatic` tool runs programs in a real process and single-steps through execution, comparing registers at each step. This is extremely useful for debugging emulation issues.
+
+### Building ptraceomatic
+
+On compatible Linux systems, ptraceomatic is built automatically:
+
+```bash
+cd build
+ls tools/ptraceomatic
+```
+
+### Using ptraceomatic
+
+Replace `ish` with `tools/ptraceomatic`:
+
+```bash
+./tools/ptraceomatic -f alpine /bin/sh
+```
+
+This runs the program with instruction-level comparison to a real process, helping identify emulation bugs.
+
+## Development Workflow
+
+### Making Changes
+
+1. Edit source code
+2. Rebuild:
+   ```bash
+   cd build
+   ninja
+   ```
+3. Test your changes:
+   ```bash
+   ./ish -f alpine /bin/sh
+   ```
+
+### Incremental Builds
+
+Ninja automatically detects which files changed and only rebuilds what's necessary:
+
+```bash
+cd build
+ninja  # Fast incremental rebuild
+```
+
+### Clean Build
+
+To rebuild everything:
+
+```bash
+cd build
+ninja clean
+ninja
+```
+
+Or delete and recreate the build directory:
+
+```bash
+rm -rf build
+meson build
+cd build
+ninja
+```
+
+## Additional Tools
+
+### fakefsify and unfakefsify
+
+**fakefsify**: Converts a tarball to a fake filesystem:
+```bash
+./tools/fakefsify input.tar.gz output_dir
+```
+
+**unfakefsify**: Converts a fake filesystem back to a tarball:
+```bash
+./tools/unfakefsify input_dir output.tar.gz
+```
+
+### unicornomatic
+
+If Unicorn library is available, the `unicornomatic` tool is built for testing with the Unicorn engine:
+
+```bash
+./tools/unicornomatic -f alpine /bin/sh
+```
+
+## Troubleshooting
+
+### Build Failures
+
+**Problem:** Meson configuration fails.
+
+**Solution:**
+1. Check that all dependencies are installed
+2. Verify Clang and LLD are in your PATH:
+   ```bash
+   which clang
+   which lld
+   ```
+3. Check Python 3 and Meson versions:
+   ```bash
+   python3 --version
+   meson --version
+   ```
+
+### Missing fakefsify
+
+**Problem:** `tools/fakefsify` doesn't exist after building.
+
+**Solution:**
+Install libarchive:
+
+**macOS:**
+```bash
+brew install libarchive
+```
+
+**Linux:**
+```bash
+sudo apt install libarchive-dev
+```
+
+Then reconfigure and rebuild:
+```bash
+cd build
+meson configure --reconfigure
+ninja
+```
+
+### Runtime Errors
+
+**Problem:** "No such file or directory" when running `./ish`.
+
+**Solution:**
+1. Ensure you're in the `build/` directory
+2. Check that the filesystem path is correct:
+   ```bash
+   ls -la alpine/
+   ```
+3. Verify the command exists in the filesystem:
+   ```bash
+   ls alpine/bin/sh
+   ```
+
+### Linking Errors
+
+**Problem:** Undefined symbols during linking.
+
+**Solution:**
+1. Ensure sqlite3 is installed:
+   ```bash
+   sqlite3 --version
+   ```
+2. Check that all submodules are initialized:
+   ```bash
+   git submodule status
+   ```
+3. Try a clean rebuild:
+   ```bash
+   rm -rf build
+   meson build
+   cd build
+   ninja
+   ```
+
+### ptraceomatic Not Available
+
+**Problem:** `tools/ptraceomatic` not built.
+
+**Explanation:** ptraceomatic is only built on 64-bit Linux systems with kernel 4.11 or later. It requires:
+- `host_machine.system() == 'linux'`
+- `host_machine.cpu() == 'x86_64'`
+- Linux kernel 4.11+
+
+This is not an error if you're on macOS or 32-bit Linux.
+
+## Performance Tips
+
+### Faster Builds
+
+- Use ninja's parallel compilation (automatic by default)
+- Use incremental builds instead of clean rebuilds
+- Build with release optimizations:
+  ```bash
+  meson build --buildtype=release
+  ```
+
+### Faster Runtime
+
+- Use the default `asbestos` engine (3-5x faster than alternatives)
+- Avoid enabling `instr` logging (very slow)
+- Use 32-bit guest architecture unless you need 64-bit
+
+## Next Steps
+
+- [Build for iOS](/building/ios) - Build the full iOS app
+- [Learn about debugging](/advanced/debugging) - Debug iSH effectively
+- [Explore the codebase](https://github.com/ish-app/ish) - Understand the architecture

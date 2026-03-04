@@ -1,0 +1,517 @@
+---
+title: Interpreter Architecture
+description: Deep dive into iSH's threaded code interpreter and gadget system
+---
+
+## Overview
+
+At the heart of iSH is a high-performance interpreter that uses **threaded code** - a technique where instructions are represented as an array of function pointers, with each function (called a "gadget") ending in a tailcall to the next. This achieves a 3-5x speedup compared to traditional switch-based dispatch.
+
+<Warning>
+From the README:
+
+> Long-term exposure to this code may cause loss of sanity, nightmares about GAS macros and linker errors, or any number of other debilitating side effects. This code is known to the State of California to cause cancer, birth defects, and reproductive harm.
+</Warning>
+
+## Threaded Code Technique
+
+### Traditional Interpretation (Switch Dispatch)
+
+A typical emulator uses a loop with a switch statement:
+
+```c
+// Traditional switch-based interpreter (NOT how iSH works)
+while (running) {
+    Instruction inst = decode(ip);
+    switch (inst.opcode) {
+        case OP_MOV:
+            execute_mov(inst);
+            break;
+        case OP_ADD:
+            execute_add(inst);
+            break;
+        // ... hundreds more cases
+    }
+    ip += inst.length;
+}
+```
+
+This has overhead:
+- Branch misprediction on the switch
+- Loop condition check
+- Instruction pointer update
+
+### Threaded Code (How iSH Works)
+
+iSH generates an array of function pointers, where each function tailcalls the next:
+
+```c
+// Conceptual example (actual implementation is in assembly)
+void gadget_mov(...) {
+    // Execute MOV
+    // ...
+    // Tailcall next gadget
+    next_gadget_ptr();  // No return!
+}
+
+void gadget_add(...) {
+    // Execute ADD
+    // ...
+    next_gadget_ptr();  // No return!
+}
+
+// Generated code:
+function_ptr code[] = {
+    gadget_mov,
+    &operand1,
+    &operand2,
+    gadget_add,
+    &operand1,
+    &operand2,
+    // ...
+};
+```
+
+**Benefits:**
+- No dispatch loop overhead
+- Better branch prediction (direct calls)
+- CPU's return stack buffer optimizes tailcalls
+- 3-5x faster than switch dispatch
+
+## Gadget System
+
+### What is a Gadget?
+
+A gadget is a small assembly function that:
+1. Executes a single operation (or part of an x86 instruction)
+2. Reads its parameters from the code stream
+3. Tailcalls the next gadget
+
+From `asbestos/gadgets-aarch64/entry.S`:
+
+```asm:asbestos/gadgets-aarch64/entry.S
+.gadget exit
+    ldr eip, [_ip]        # Load EIP from code stream
+    b fiber_ret           # Jump to exit (tailcall)
+```
+
+### Gadget Types
+
+Gadgets are organized by function in separate assembly files:
+
+```c:meson.build
+emu_src += [
+    gadgets+'/entry.S',     // Entry/exit points, interrupt handling
+    gadgets+'/memory.S',    // Load/store, push/pop, memory addressing
+    gadgets+'/control.S',   // Jumps, calls, returns, conditional branches
+    gadgets+'/math.S',      // Arithmetic, logical operations
+    gadgets+'/bits.S',      // Bit manipulation, shifts, rotates
+    gadgets+'/string.S',    // String operations (rep movs, etc.)
+    gadgets+'/misc.S',      // Everything else
+]
+```
+
+### Example: Memory Gadgets
+
+From `asbestos/gadgets-aarch64/memory.S`:
+
+```asm:asbestos/gadgets-aarch64/memory.S
+.gadget push
+    sub _addr, esp, 4              # Calculate address
+    write_prep 32, push            # Prepare for write
+    str _tmp, [_xaddr]             # Store value
+    write_done 32, push            # Finish write
+    sub esp, esp, 4                # Update ESP
+    gret 1                         # Tailcall next gadget
+    write_bullshit 32, push        # Error handling
+
+.gadget pop
+    mov _addr, esp                 # Read from stack pointer
+    read_prep 32, pop              # Prepare for read
+    ldr _tmp, [_xaddr]             # Load value
+    add esp, esp, 4                # Update ESP
+    gret 1                         # Tailcall next gadget
+    read_bullshit 32, pop          # Error handling
+```
+
+**Key observations:**
+- `gret` is a macro that performs the tailcall
+- `_addr`, `_tmp`, `esp` are register aliases
+- `write_prep` and `read_prep` are macros for TLB lookup
+
+### Gadget Parameters
+
+Gadgets read parameters from the code stream pointed to by `_ip` (instruction pointer in the gadget stream, not the x86 EIP):
+
+```asm:asbestos/gadgets-aarch64/memory.S
+.gadget addr_none
+    ldr _addr, [_ip]    # Read address from code stream
+    gret 1              # Advance _ip by 1 word and tailcall
+```
+
+From the code generator in `asbestos/gen.c`:
+
+```c:asbestos/gen.c
+// Generate gadget + parameters
+#define GEN(thing) gen(state, (unsigned long) (thing))
+#define g(g) do { extern void gadget_##g(void); GEN(gadget_##g); } while (0)
+#define gg(_g, a) do { g(_g); GEN(a); } while (0)
+#define ggg(_g, a, b) do { g(_g); GEN(a); GEN(b); } while (0)
+
+// Example usage:
+gg(addr_none, offset);  // Generates: [gadget_addr_none, offset]
+```
+
+## Code Generation
+
+### gen.c - 32-bit Code Generator
+
+The code generator translates x86 instructions to gadget sequences.
+
+From `asbestos/gen.c`:
+
+```c:asbestos/gen.c
+static void gen(struct gen_state *state, unsigned long thing) {
+    assert(state->size <= state->capacity);
+    if (state->size >= state->capacity) {
+        state->capacity *= 2;
+        struct fiber_block *bigger_block = realloc(state->block,
+                sizeof(struct fiber_block) + state->capacity * sizeof(unsigned long));
+        if (bigger_block == NULL) {
+            die("out of memory while carcinizing");
+        }
+        state->block = bigger_block;
+    }
+    assert(state->size < state->capacity);
+    state->block->code[state->size++] = thing;
+}
+
+void gen_start(addr_t addr, struct gen_state *state) {
+    state->capacity = FIBER_BLOCK_INITIAL_CAPACITY;
+    state->size = 0;
+    state->ip = addr;
+    // ...
+    struct fiber_block *block = malloc(sizeof(struct fiber_block) + 
+                                       state->capacity * sizeof(unsigned long));
+    state->block = block;
+    block->addr = addr;
+}
+```
+
+### Fiber Blocks
+
+Generated code is stored in "fiber blocks":
+
+```c:asbestos/asbestos.h
+struct fiber_block {
+    addr_t addr;                    // x86 address this block starts at
+    addr_t end_addr;                // x86 address this block ends at
+    size_t used;                    // Number of gadgets used
+
+    // Jump patching for control flow
+    unsigned long *jump_ip[2];
+    unsigned long old_jump_ip[2];
+    struct list jumps_from[2];
+
+    // Links for hash table and page tracking
+    struct list chain;
+    struct list page[2];
+    struct list jetsam;             // Free list
+    bool is_jetsam;
+
+    unsigned long code[];           // Gadget array (variable length)
+};
+```
+
+### Translation Example
+
+Translating `mov eax, [ebx+8]`:
+
+1. Decode x86 instruction
+2. Generate gadget sequence:
+   ```c
+   // Pseudocode
+   g(addr_reg_b);        // Base register (EBX)
+   gg(add_imm, 8);       // Add displacement
+   g(read32);            // Read 32-bit value
+   g(store_reg_a);       // Store to EAX
+   ```
+3. This produces an array:
+   ```
+   [gadget_addr_reg_b, gadget_add_imm, 8, gadget_read32, gadget_store_reg_a]
+   ```
+
+## Assembly Implementation
+
+### Why Assembly?
+
+From the README:
+
+> Unfortunately, I made the decision to write nearly all of the gadgets in assembly language. This was probably a good decision with regards to performance (though I'll never know for sure), but a horrible decision with regards to readability, maintainability, and my sanity.
+
+**Reasons for assembly:**
+- Precise control over tailcall generation
+- Direct register allocation
+- Avoid compiler optimization interference
+- Consistent calling convention across gadgets
+
+### The Cost
+
+> The amount of bullshit I've had to put up with from the compiler/assembler/linker is insane. [...] I've had to ignore best practices in code structure and naming. You'll find macros and variables with such descriptive names as `ss` and `s` and `a`. Assembler macros nested beyond belief. And to top it off, there are almost no comments.
+
+### Entry Point
+
+From `asbestos/gadgets-aarch64/entry.S`:
+
+```asm:asbestos/gadgets-aarch64/entry.S
+.global NAME(fiber_enter)
+.type_compat fiber_enter,function
+NAME(fiber_enter):
+    stp x18, x19, [sp, -0x70]!    # Save callee-saved registers
+    stp x20, x21, [sp, 0x10]
+    stp x22, x23, [sp, 0x20]
+    stp x24, x25, [sp, 0x30]
+    stp x26, x27, [sp, 0x40]
+    stp x28, x29, [sp, 0x50]
+    str lr, [sp, 0x60]
+    add _ip, x0, FIBER_BLOCK_code  # _ip = start of gadget array
+    # cpu is already x1
+    add _tlb, x2, TLB_entries      # Set up TLB pointer
+    load_regs                      # Load x86 registers
+    gret                           # Jump to first gadget!
+```
+
+**What happens:**
+1. Save host (ARM64) registers
+2. Set up interpreter state (`_ip`, `_cpu`, `_tlb`)
+3. Load x86 registers into ARM64 registers
+4. Jump to first gadget
+5. Gadgets execute until `fiber_ret`
+
+### Register Allocation
+
+On ARM64, x86 registers are mapped to ARM64 registers:
+
+```asm
+// From gadgets.h (conceptual)
+#define eax  w0   // or similar mapping
+#define ebx  w1
+#define ecx  w2
+// etc.
+#define _ip  x19  // Gadget instruction pointer
+#define _cpu x20  // Pointer to cpu_state
+#define _tlb x21  // Pointer to TLB
+```
+
+This allows direct manipulation without memory access.
+
+## Performance Characteristics
+
+### Speedup Metrics
+
+From the README:
+
+> The result is a speedup of roughly 3-5x compared to emulation using a simpler switch dispatch.
+
+**Factors contributing to speedup:**
+
+1. **No dispatch overhead**: Each gadget jumps directly to the next
+2. **Branch prediction**: CPUs predict direct calls better than switch statements
+3. **Register allocation**: x86 registers stay in host registers
+4. **Reduced memory access**: Instruction decoding happens once during translation
+
+### Bottlenecks
+
+1. **Memory operations**: TLB lookups for guest memory access
+2. **Block transitions**: Jumping between fiber blocks has overhead
+3. **Code generation**: First execution of a block requires translation
+4. **Cache**: Large working sets can evict fiber blocks
+
+## Challenges and Trade-offs
+
+### Maintainability
+
+**Problems:**
+- Assembly code is hard to read
+- Macros are heavily nested
+- Variable names are cryptic (`ss`, `s`, `a`)
+- Few comments
+- Platform-specific (separate gadgets for ARM64, x86_64)
+
+**Benefits:**
+- Maximum performance
+- Fine-grained control
+- Consistent behavior
+
+### Debugging Difficulty
+
+Debugging gadget code is challenging:
+- Stack traces are confusing (no returns, only jumps)
+- Register state is split between x86 and host
+- Errors in gadgets can crash the entire emulator
+
+### Portability
+
+Each host architecture needs its own gadget implementation:
+- `gadgets-aarch64/` - ARM64 (iOS, Apple Silicon)
+- `gadgets-x86_64/` - x86_64 (Linux, older Macs)
+- `gadgets-aarch64-64/` - ARM64 for 64-bit guest
+
+This multiplies maintenance burden.
+
+## Code Structure
+
+### Asbestos Module
+
+The interpreter is called "asbestos" (a play on "fiber"):
+
+```c:asbestos/asbestos.h
+struct asbestos {
+    struct mmu *mmu;                  // Memory management
+    size_t mem_used;                  // Memory used by fiber blocks
+    size_t num_blocks;                // Number of fiber blocks
+
+    struct list *hash;                // Hash table of blocks by address
+    size_t hash_size;
+
+    struct list jetsam;               // Blocks to be freed
+
+    // Page tracking for invalidation
+    struct {
+        struct list blocks[2];
+    } *page_hash;
+
+    lock_t lock;
+    wrlock_t jetsam_lock;
+};
+```
+
+### Block Lifecycle
+
+1. **Creation**: x86 instruction decoded, gadget sequence generated (`gen.c`)
+2. **Execution**: `fiber_enter` jumps to gadget array, gadgets execute
+3. **Caching**: Block stored in hash table by x86 address
+4. **Invalidation**: When guest memory changes, affected blocks marked as jetsam
+5. **Freeing**: Jetsam blocks freed at next safe point
+
+## Example: Complete Instruction Flow
+
+Let's trace `mov eax, 42` (opcode: `B8 2A 00 00 00`):
+
+### 1. First Execution (Translation)
+
+```c
+// In gen_step32()
+// Decode instruction
+byte opcode = 0xB8;  // MOV reg, imm32
+int reg = opcode & 0x7;  // 0 = EAX
+dword_t imm;
+READIMM(imm, 32);  // Read 0x0000002A
+
+// Generate gadgets
+ga(load_imm, reg);  // load_imm_gadgets[0] = EAX
+GEN(imm);           // Parameter: 0x0000002A
+```
+
+Produces:
+```
+[gadget_load_imm_eax, 0x0000002A]
+```
+
+### 2. Execution
+
+```asm
+// gadget_load_imm_eax (conceptual ARM64)
+gadget_load_imm_eax:
+    ldr w0, [_ip]       // Load immediate value into w0 (EAX)
+    add _ip, _ip, #8    // Skip parameter
+    ldr x8, [_ip]       // Load next gadget pointer
+    br x8               // Tailcall (no return!)
+```
+
+### 3. Result
+
+EAX register (w0) now contains 0x2A, and execution continues with the next gadget.
+
+## Gadget Categories in Detail
+
+### Entry/Exit (entry.S)
+
+- `fiber_enter` - Enter gadget execution
+- `fiber_exit` - Return to native code
+- `fiber_ret` - Normal block termination
+- `interrupt` - Handle exceptions
+
+### Memory (memory.S)
+
+- `push`/`pop` - Stack operations
+- `addr_*` - Address calculation (base, index, scale, displacement)
+- `seg_gs` - Segment override
+- TLB miss handlers
+
+### Control Flow (control.S)
+
+- `jmp`, `call`, `ret` - Control transfer
+- Conditional jumps (Jcc)
+- Loops
+
+### Math (math.S)
+
+- `add`, `sub`, `mul`, `div`
+- Logical operations (`and`, `or`, `xor`)
+- Comparisons (`cmp`, `test`)
+- Flag computation
+
+### Bits (bits.S)
+
+- Shifts (`shl`, `shr`, `sar`)
+- Rotates (`rol`, `ror`)
+- Bit tests (`bt`, `bts`, `btr`)
+
+### String (string.S)
+
+- `movs`, `stos`, `lods`, `scas`, `cmps`
+- `rep` prefix handling
+
+### Misc (misc.S)
+
+- `cpuid`
+- `rdtsc`
+- System calls
+- Everything else
+
+## Advanced Topics
+
+### Block Chaining
+
+When one block ends with a jump to another block, they can be "chained" - the jump gadget is patched to jump directly to the target block instead of exiting and looking up the target.
+
+### Invalidation
+
+When guest code modifies its own memory (self-modifying code), affected blocks must be invalidated:
+
+```c:asbestos/asbestos.h
+void asbestos_invalidate_range(struct asbestos *asbestos, page_t start, page_t end);
+void asbestos_invalidate_page(struct asbestos *asbestos, page_t page);
+void asbestos_invalidate_all(struct asbestos *asbestos);
+```
+
+### Interrupts and Exceptions
+
+Gadgets can trigger interrupts:
+
+```asm
+.gadget interrupt
+    ldr _tmp, [_ip]              // Load interrupt number
+    ldr w8, [_ip, 16]            // Load fault address
+    str w8, [_cpu, CPU_segfault_addr]
+    ldr eip, [_ip, 8]            // Load EIP
+    strb wzr, [_cpu, CPU_segfault_was_write]
+    b fiber_exit                 // Exit to handle interrupt
+```
+
+## See Also
+
+- [Debugging](/advanced/debugging) - Debug gadget execution
+- [64-bit Port](/advanced/64bit-port) - 64-bit gadget implementation
+- [Logging](/advanced/logging) - Trace gadget execution with `instr` channel

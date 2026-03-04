@@ -1,0 +1,526 @@
+---
+title: "Memory API"
+description: "Memory management, page tables, and user space access"
+---
+
+The memory API provides virtual memory management, page table operations, and safe access to user space memory.
+
+## System Calls
+
+### Memory Allocation
+
+```c kernel/calls.h:49
+addr_t sys_brk(addr_t new_brk);
+```
+
+Adjusts the program break (end of the heap).
+
+<ParamField path="new_brk" type="addr_t" required>
+  New heap end address (0 to query current break)
+</ParamField>
+
+<ResponseField name="return" type="addr_t">
+  Current or new break address on success, or previous break on error
+</ResponseField>
+
+**Example:**
+
+```c
+// Query current break
+addr_t current_brk = sys_brk(0);
+
+// Extend heap by 4KB
+addr_t new_brk = sys_brk(current_brk + 0x1000);
+if (new_brk != current_brk + 0x1000) {
+    // Error: couldn't allocate
+}
+```
+
+### Memory Mapping
+
+```c kernel/calls.h:55-59
+addr_t sys_mmap(addr_t args_addr);
+addr_t sys_mmap2(addr_t addr, dword_t len, dword_t prot, dword_t flags, fd_t fd_no, dword_t offset);
+#ifdef ISH_GUEST_64BIT
+addr_t sys_mmap64(addr_t addr, addr_t len, dword_t prot, dword_t flags, fd_t fd_no, addr_t offset);
+#endif
+```
+
+<ParamField path="addr" type="addr_t">
+  Requested address (0 for kernel to choose)
+</ParamField>
+
+<ParamField path="len" type="dword_t / addr_t">
+  Length in bytes to map
+</ParamField>
+
+<ParamField path="prot" type="dword_t">
+  Protection flags (PROT_READ, PROT_WRITE, PROT_EXEC)
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Mapping flags (MMAP_SHARED, MMAP_PRIVATE, MMAP_FIXED, MMAP_ANONYMOUS)
+</ParamField>
+
+<ParamField path="fd_no" type="fd_t">
+  File descriptor to map (ignored if MMAP_ANONYMOUS)
+</ParamField>
+
+<ParamField path="offset" type="dword_t / addr_t">
+  Offset into file (in pages for mmap2, bytes for mmap64)
+</ParamField>
+
+<ResponseField name="return" type="addr_t">
+  Address of mapped region on success, negative error code on failure
+</ResponseField>
+
+**Flags:**
+
+```c kernel/calls.h:51-54
+#define MMAP_SHARED    0x1   // Share mapping with other processes
+#define MMAP_PRIVATE   0x2   // Create private copy-on-write mapping
+#define MMAP_FIXED     0x10  // Map at exact address (or fail)
+#define MMAP_ANONYMOUS 0x20  // Not backed by file
+```
+
+**Example:**
+
+```c
+// Allocate anonymous private memory
+addr_t addr = sys_mmap2(0, 0x1000, PROT_READ | PROT_WRITE,
+                        MMAP_PRIVATE | MMAP_ANONYMOUS, -1, 0);
+if ((int)addr < 0) {
+    // Error
+}
+
+// Map a file
+fd_t fd = sys_open("/path/to/file", O_RDONLY_, 0);
+addr_t mapped = sys_mmap2(0, 0x10000, PROT_READ,
+                          MMAP_PRIVATE, fd, 0);
+```
+
+### Memory Unmapping
+
+```c kernel/calls.h:60
+int_t sys_munmap(addr_t addr, addr_t len);
+```
+
+<ParamField path="addr" type="addr_t" required>
+  Starting address to unmap (must be page-aligned)
+</ParamField>
+
+<ParamField path="len" type="addr_t" required>
+  Length in bytes to unmap
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  0 on success, negative error code on failure
+</ResponseField>
+
+**Example:**
+
+```c
+int err = sys_munmap(addr, 0x1000);
+if (err < 0) {
+    // Error
+}
+```
+
+### Memory Protection
+
+```c kernel/calls.h:61
+int_t sys_mprotect(addr_t addr, addr_t len, int_t prot);
+```
+
+Changes protection on a region of memory.
+
+<ParamField path="prot" type="int_t" required>
+  New protection flags (PROT_READ | PROT_WRITE | PROT_EXEC)
+</ParamField>
+
+**Example:**
+
+```c
+// Make region read-only
+sys_mprotect(addr, 0x1000, PROT_READ);
+```
+
+## User Space Access
+
+These functions safely access memory in the emulated user space.
+
+### Read/Write Functions
+
+```c kernel/calls.h:19-25
+int must_check user_read(addr_t addr, void *buf, size_t count);
+int must_check user_write(addr_t addr, const void *buf, size_t count);
+int must_check user_read_task(struct task *task, addr_t addr, void *buf, size_t count);
+int must_check user_write_task(struct task *task, addr_t addr, const void *buf, size_t count);
+int must_check user_write_task_ptrace(struct task *task, addr_t addr, const void *buf, size_t count);
+int must_check user_read_string(addr_t addr, char *buf, size_t max);
+int must_check user_write_string(addr_t addr, const char *buf);
+```
+
+<ParamField path="user_read" type="int">
+  Reads data from current task's user space
+</ParamField>
+
+<ParamField path="user_write" type="int">
+  Writes data to current task's user space
+</ParamField>
+
+<ParamField path="user_read_task" type="int">
+  Reads data from specified task's user space
+</ParamField>
+
+<ParamField path="user_write_task" type="int">
+  Writes data to specified task's user space
+</ParamField>
+
+<ParamField path="user_read_string" type="int">
+  Reads null-terminated string from user space
+</ParamField>
+
+<ParamField path="user_write_string" type="int">
+  Writes null-terminated string to user space
+</ParamField>
+
+<ResponseField name="return" type="int">
+  0 on success, negative error code on failure (e.g., -EFAULT for invalid address)
+</ResponseField>
+
+**Example:**
+
+```c
+// Read 4 bytes from user space
+uint32_t value;
+if (user_read(user_addr, &value, sizeof(value)) < 0) {
+    return -EFAULT;
+}
+
+// Write data to user space
+struct my_struct data = { /* ... */ };
+if (user_write(user_addr, &data, sizeof(data)) < 0) {
+    return -EFAULT;
+}
+
+// Read string from user space
+char filename[256];
+if (user_read_string(path_addr, filename, sizeof(filename)) < 0) {
+    return -EFAULT;
+}
+```
+
+### Convenience Macros
+
+```c kernel/calls.h:26-29
+#define user_get(addr, var) user_read(addr, &(var), sizeof(var))
+#define user_put(addr, var) user_write(addr, &(var), sizeof(var))
+#define user_get_task(task, addr, var) user_read_task(task, addr, &(var), sizeof(var))
+#define user_put_task(task, addr, var) user_write_task(task, addr, &(var), sizeof(var))
+```
+
+**Example:**
+
+```c
+// Read single value
+int32_t fd;
+if (user_get(fd_addr, fd) < 0) {
+    return -EFAULT;
+}
+
+// Write single value
+int32_t result = 42;
+if (user_put(result_addr, result) < 0) {
+    return -EFAULT;
+}
+```
+
+## Memory Management Unit
+
+### MMU Structure
+
+```c emu/mmu.h:31-35
+struct mmu {
+    struct mmu_ops *ops;        // MMU operations
+    struct asbestos *asbestos;  // Memory access tracking
+    uint64_t changes;           // Change counter
+};
+```
+
+### MMU Operations
+
+```c emu/mmu.h:41-44
+struct mmu_ops {
+    void *(*translate)(struct mmu *mmu, addr_t addr, int type);
+};
+```
+
+<ParamField path="translate" type="void *">
+  Translates guest virtual address to host pointer. Returns NULL on fault.
+</ParamField>
+
+<ParamField path="type" type="int">
+  Access type: MEM_READ, MEM_WRITE, or MEM_WRITE_PTRACE
+</ParamField>
+
+```c emu/mmu.h:37-39
+#define MEM_READ 0
+#define MEM_WRITE 1
+#define MEM_WRITE_PTRACE 2
+```
+
+**Example:**
+
+```c
+void *ptr = mmu_translate(cpu.mmu, guest_addr, MEM_READ);
+if (ptr == NULL) {
+    // Page fault
+}
+```
+
+## Page Tables
+
+### Memory Structure
+
+The `mem` structure manages virtual memory mappings.
+
+**32-bit:**
+
+```c kernel/memory.h:67-75
+struct mem {
+    struct pt_entry **pgdir;    // 2-level page directory
+    int pgdir_used;             // Number of allocated directories
+    struct mmu mmu;             // MMU interface
+    wrlock_t lock;              // Read/write lock
+};
+```
+
+**64-bit:**
+
+```c kernel/memory.h:54-62
+struct mem {
+    struct pt_hash_entry **hash_table;  // Hash table for sparse pages
+    int pages_mapped;                   // Count of mapped pages
+    page_t mmap_cursor;                 // Next page for mmap allocation
+    struct mmu mmu;                     // MMU interface
+    wrlock_t lock;                      // Read/write lock
+};
+```
+
+### Page Table Entry
+
+```c kernel/memory.h:35-40
+struct pt_entry {
+    struct data *data;          // Backing data
+    size_t offset;              // Offset into data
+    unsigned flags;             // Page flags (P_READ, P_WRITE, etc.)
+    struct list blocks[2];      // Block lists
+};
+```
+
+### Page Flags
+
+```c kernel/memory.h:87-102
+#define P_READ       (1 << 0)  // Readable
+#define P_WRITE      (1 << 1)  // Writable
+#define P_EXEC       (1 << 2)  // Executable
+#define P_RWX        (P_READ | P_WRITE | P_EXEC)
+#define P_GROWSDOWN  (1 << 3)  // Stack grows downward
+#define P_COW        (1 << 4)  // Copy-on-write
+#define P_ANONYMOUS  (1 << 6)  // Anonymous mapping
+#define P_SHARED     (1 << 7)  // Shared mapping
+#define P_GUARD      (1 << 8)  // Guard page
+
+#define P_WRITABLE(flags) (flags & P_WRITE && !(flags & P_COW))
+```
+
+### Page Constants
+
+```c emu/mmu.h:22-29
+#define PAGE_BITS 12
+#define PAGE_SIZE (1 << PAGE_BITS)  // 4096 bytes
+#define PAGE(addr) ((addr) >> PAGE_BITS)
+#define PGOFFSET(addr) ((addr) & (PAGE_SIZE - 1))
+#define PAGE_ROUND_UP(bytes) (PAGE((bytes) + PAGE_SIZE - 1))
+```
+
+```c kernel/memory.h:12-13
+#define BYTES_ROUND_DOWN(bytes) (PAGE(bytes) << PAGE_BITS)
+#define BYTES_ROUND_UP(bytes) (PAGE_ROUND_UP(bytes) << PAGE_BITS)
+```
+
+**Example:**
+
+```c
+addr_t addr = 0x12345;
+page_t page_num = PAGE(addr);           // 0x12
+addr_t offset = PGOFFSET(addr);         // 0x345
+addr_t page_start = page_num << PAGE_BITS;  // 0x12000
+```
+
+### Memory Initialization
+
+```c kernel/memory.h:78-80
+void mem_init(struct mem *mem);
+void mem_destroy(struct mem *mem);
+```
+
+<ParamField path="mem_init" type="void">
+  Initializes empty address space
+</ParamField>
+
+<ParamField path="mem_destroy" type="void">
+  Frees all memory and destroys address space
+</ParamField>
+
+**Example:**
+
+```c
+struct mem mem;
+mem_init(&mem);
+
+// Use memory...
+
+mem_destroy(&mem);
+```
+
+### Page Table Operations
+
+```c kernel/memory.h:82-85
+struct pt_entry *mem_pt(struct mem *mem, page_t page);
+void mem_next_page(struct mem *mem, page_t *page);
+```
+
+<ParamField path="mem_pt" type="struct pt_entry *">
+  Gets page table entry for given page number
+</ParamField>
+
+<ParamField path="mem_next_page" type="void">
+  Increments page number, skipping unallocated regions. For iteration.
+</ParamField>
+
+**Example:**
+
+```c
+// Iterate over all mapped pages
+for (page_t page = 0; page < MEM_PAGES; mem_next_page(&mem, &page)) {
+    struct pt_entry *entry = mem_pt(&mem, page);
+    if (entry != NULL) {
+        // Process mapped page
+    }
+}
+```
+
+### Mapping Functions
+
+```c kernel/memory.h:104-120
+bool pt_is_hole(struct mem *mem, page_t start, pages_t pages);
+page_t pt_find_hole(struct mem *mem, pages_t size);
+
+int pt_map(struct mem *mem, page_t start, pages_t pages, void *memory, size_t offset, unsigned flags);
+int pt_map_nothing(struct mem *mem, page_t page, pages_t pages, unsigned flags);
+int pt_unmap(struct mem *mem, page_t start, pages_t pages);
+int pt_unmap_always(struct mem *mem, page_t start, pages_t pages);
+int pt_set_flags(struct mem *mem, page_t start, pages_t pages, int flags);
+int pt_copy_on_write(struct mem *src, struct mem *dst, page_t start, page_t pages);
+```
+
+<ParamField path="pt_is_hole" type="bool">
+  Checks if region is unmapped. Returns true if unmapped.
+</ParamField>
+
+<ParamField path="pt_find_hole" type="page_t">
+  Finds unmapped region of given size. Returns starting page number.
+</ParamField>
+
+<ParamField path="pt_map" type="int">
+  Maps host memory into guest address space. Takes ownership of memory.
+</ParamField>
+
+<ParamField path="pt_map_nothing" type="int">
+  Maps anonymous zero-filled pages
+</ParamField>
+
+<ParamField path="pt_unmap" type="int">
+  Unmaps pages. Returns -1 if any part is not mapped.
+</ParamField>
+
+<ParamField path="pt_unmap_always" type="int">
+  Unmaps pages. Doesn't care if already unmapped.
+</ParamField>
+
+<ParamField path="pt_set_flags" type="int">
+  Changes protection flags on mapped pages
+</ParamField>
+
+<ParamField path="pt_copy_on_write" type="int">
+  Copies pages from src to dst using copy-on-write
+</ParamField>
+
+**Example:**
+
+```c
+// Allocate and map memory
+void *memory = malloc(PAGE_SIZE * 4);
+if (pt_map(&mem, 0x1000 >> PAGE_BITS, 4, memory, 0, P_READ | P_WRITE) < 0) {
+    free(memory);
+    return -ENOMEM;
+}
+
+// Map anonymous pages
+if (pt_map_nothing(&mem, 0x5000 >> PAGE_BITS, 8, P_READ | P_WRITE) < 0) {
+    return -ENOMEM;
+}
+
+// Change protection
+pt_set_flags(&mem, 0x1000 >> PAGE_BITS, 4, P_READ);  // Make read-only
+
+// Unmap
+pt_unmap(&mem, 0x1000 >> PAGE_BITS, 4);
+```
+
+### Memory Pointer Access
+
+```c kernel/memory.h:123-124
+void *mem_ptr(struct mem *mem, addr_t addr, int type);
+int mem_segv_reason(struct mem *mem, addr_t addr);
+```
+
+<ParamField path="mem_ptr" type="void *">
+  Translates guest address to host pointer. Must call with mem read-locked. Returns NULL on fault.
+</ParamField>
+
+<ParamField path="mem_segv_reason" type="int">
+  Gets reason for segmentation fault at address
+</ParamField>
+
+**Example:**
+
+```c
+read_wrlock(&mem.lock);
+void *ptr = mem_ptr(&mem, guest_addr, MEM_WRITE);
+if (ptr != NULL) {
+    *(uint32_t *)ptr = 0x12345678;
+}
+read_wrunlock(&mem.lock);
+```
+
+## Data Backing
+
+Pages are backed by `data` structures that reference host memory.
+
+```c kernel/memory.h:20-33
+struct data {
+    void *data;                 // Host memory pointer (immutable)
+    size_t size;                // Size in bytes (immutable)
+    atomic_uint refcount;       // Reference count
+
+    // For /proc/pid/maps
+    struct fd *fd;              // Backing file descriptor
+    size_t file_offset;         // Offset into file
+    const char *name;           // Mapping name
+};
+```
+
+Data structures are reference counted and shared between pages with copy-on-write.

@@ -1,0 +1,333 @@
+---
+title: Installation
+description: Install iSH on your iOS device through the App Store or TestFlight beta program
+---
+
+iSH is available for iOS devices through multiple installation channels. This guide will walk you through installing iSH and setting up your Linux environment for the first time.
+
+## System requirements
+
+Before installing iSH, ensure your device meets these requirements:
+
+<Info>
+**Minimum iOS version**: iOS 11 or later  
+**Compatible devices**: iPhone, iPad, and iPod touch  
+**Storage**: At least 100MB free space (more recommended for packages)
+</Info>
+
+iSH runs on all iOS devices that support iOS 11 or later, including older iPhones and iPads. However, performance will be better on newer devices with faster processors.
+
+## Installation methods
+
+You can install iSH through two primary channels:
+
+<Tabs>
+  <Tab title="App Store (Stable)">
+    ### Install from the App Store
+
+    The App Store version is the most stable release, recommended for most users.
+
+    <Steps>
+      <Step title="Open the App Store">
+        Launch the App Store app on your iOS device.
+      </Step>
+
+      <Step title="Search for iSH Shell">
+        Use the search function to find "iSH Shell" or visit the direct link: [iSH Shell on the App Store](https://apps.apple.com/us/app/ish-shell/id1436902243)
+      </Step>
+
+      <Step title="Download and install">
+        Tap the "Get" button to download and install iSH. You may need to authenticate with Face ID, Touch ID, or your Apple ID password.
+      </Step>
+
+      <Step title="Wait for installation">
+        The app will download and install automatically. The initial download is relatively small, but the app will set up the Alpine Linux filesystem on first launch.
+      </Step>
+    </Steps>
+
+    <Tip>
+    The App Store version receives updates less frequently but is thoroughly tested and considered stable for daily use.
+    </Tip>
+  </Tab>
+
+  <Tab title="TestFlight (Beta)">
+    ### Install from TestFlight
+
+    The TestFlight beta provides access to the latest features and improvements before they reach the App Store.
+
+    <Steps>
+      <Step title="Install TestFlight">
+        If you don't already have it, download the TestFlight app from the App Store. TestFlight is Apple's official beta testing platform.
+      </Step>
+
+      <Step title="Join the iSH beta">
+        Open this link on your iOS device: [iSH TestFlight Beta](https://testflight.apple.com/join/97i7KM8O)
+        
+        Alternatively, you can manually enter the beta code `97i7KM8O` in the TestFlight app.
+      </Step>
+
+      <Step title="Accept the invitation">
+        Tap "Accept" to join the beta program. You'll see information about the current beta build.
+      </Step>
+
+      <Step title="Install iSH">
+        Tap "Install" to download the beta version of iSH. The app will appear on your home screen with a small orange dot indicating it's a beta build.
+      </Step>
+    </Steps>
+
+    <Warning>
+    Beta builds may contain bugs or unstable features. Your filesystem and data should persist across updates, but it's recommended to back up important files.
+    </Warning>
+
+    **Beta advantages:**
+    - Access to new features early
+    - Help test and improve iSH
+    - More frequent updates
+    - Direct feedback channel to developers
+
+    **Beta considerations:**
+    - May have bugs or stability issues
+    - Features might change or be removed
+    - Updates happen more frequently
+  </Tab>
+</Tabs>
+
+## First launch
+
+When you launch iSH for the first time, the app performs several initialization steps:
+
+<Steps>
+  <Step title="Filesystem setup">
+    iSH creates the Alpine Linux root filesystem. This process takes 30-60 seconds and happens automatically. You'll see a terminal window with initialization messages.
+    
+    The app sets up the fakefs filesystem (see `kernel/init.c:78`) which stores Linux file data and metadata in a format compatible with iOS.
+  </Step>
+
+  <Step title="Root mount">
+    The system mounts the root filesystem, creating the standard Linux directory structure:
+    - `/bin` - Essential command binaries
+    - `/etc` - Configuration files
+    - `/home` - User home directories
+    - `/tmp` - Temporary files
+    - `/usr` - User programs and data
+    - `/var` - Variable data files
+  </Step>
+
+  <Step title="Shell initialization">
+    iSH launches the default shell (Alpine's ash shell, which is part of busybox). You'll see a command prompt, typically:
+    ```bash
+    localhost:~#
+    ```
+  </Step>
+</Steps>
+
+<Info>
+The hash symbol `#` in the prompt indicates you're running as root. In iSH, you're always root since the entire Linux environment runs in iOS's sandbox with your app's permissions.
+</Info>
+
+## First-launch configuration
+
+After successful initialization, you should verify your environment and perform some basic setup:
+
+### Verify the installation
+
+Run a few basic commands to ensure everything is working:
+
+```bash
+# Check the current directory
+pwd
+# Output: /root
+
+# List files in the current directory
+ls -la
+
+# Check the Alpine version
+cat /etc/alpine-release
+
+# View available disk space
+df -h
+```
+
+### Update package indices
+
+Before installing any packages, update the package repository indices:
+
+```bash
+apk update
+```
+
+This command downloads the latest package lists from Alpine's repositories.
+
+<Tip>
+Run `apk update` regularly to ensure you have access to the latest package versions and security updates.
+</Tip>
+
+### Set your timezone (optional)
+
+By default, iSH uses UTC time. To set your local timezone:
+
+```bash
+# List available timezones
+ls /usr/share/zoneinfo/
+
+# Set timezone (example: America/New_York)
+setup-timezone -z America/New_York
+```
+
+## Understanding the file system
+
+iSH uses a custom filesystem implementation called fakefs that bridges Linux and iOS:
+
+### How fakefs works
+
+The fakefs implementation (located in `fs/fake.c`) provides:
+
+- **Real file storage**: Actual file content is stored in iOS's app container
+- **Metadata database**: Linux-specific metadata (permissions, ownership, device numbers) is stored in a SQLite database
+- **iOS integration**: Files are accessible through iOS's Files app via a File Provider extension
+
+### Accessing iOS files
+
+iSH can access files in its own container and in shared iOS locations:
+
+```bash
+# List available mount points
+df -h
+
+# The /root directory is your primary workspace
+cd /root
+pwd
+```
+
+<Note>
+The iSH filesystem is isolated within the app's sandbox. You can use the Files app on iOS to access iSH files and share documents between iSH and other iOS apps.
+</Note>
+
+## Troubleshooting installation issues
+
+If you encounter problems during installation or first launch:
+
+### App crashes on launch
+
+<Accordion title="Solution: Force quit and restart">
+  1. Swipe up from the bottom of the screen (or double-click Home button)
+  2. Find iSH in the app switcher
+  3. Swipe up on iSH to force quit
+  4. Relaunch iSH from the home screen
+  
+  If the problem persists, try deleting and reinstalling the app. Note that this will erase your iSH filesystem.
+</Accordion>
+
+### Filesystem initialization fails
+
+<Accordion title="Solution: Check storage and reinstall">
+  1. Verify you have at least 100MB of free storage on your device
+  2. Delete the app completely (this removes all iSH data)
+  3. Restart your device
+  4. Reinstall iSH from the App Store or TestFlight
+  
+  The app needs sufficient space to extract the Alpine Linux root filesystem during initialization.
+</Accordion>
+
+### Blank screen or unresponsive terminal
+
+<Accordion title="Solution: Check terminal settings and restart">
+  1. Try tapping anywhere on the screen to activate the keyboard
+  2. Force quit the app and relaunch
+  3. If using an external keyboard, try disconnecting it
+  4. Check if the terminal theme might be making text invisible (Settings → Appearance)
+</Accordion>
+
+### Package manager not working
+
+<Accordion title="Solution: Update package indices">
+  ```bash
+  # Update package repository indices
+  apk update
+  
+  # If that fails, check network connectivity
+  ping -c 3 google.com
+  
+  # Verify repository configuration
+  cat /etc/apk/repositories
+  ```
+  
+  Make sure iSH has permission to access the network in iOS Settings → iSH.
+</Accordion>
+
+## Storage management
+
+iSH stores its filesystem within the app's container. Here's how to manage storage:
+
+### Check disk usage
+
+```bash
+# View overall disk usage
+df -h
+
+# Check directory sizes
+du -sh /*
+
+# Find large files
+find / -type f -size +10M -exec ls -lh {} \;
+```
+
+### Clean up space
+
+```bash
+# Remove package cache
+apk cache clean
+
+# Remove unused packages
+apk del <package-name>
+
+# Clear temporary files
+rm -rf /tmp/*
+```
+
+<Warning>
+Deleting the iSH app from iOS will permanently delete your entire Linux filesystem, including all installed packages and files. Make sure to back up important data.
+</Warning>
+
+## Upgrading iSH
+
+When updates are available:
+
+### App Store updates
+
+1. Updates appear in the App Store's "Updates" tab
+2. Tap "Update" next to iSH
+3. Your filesystem and data are preserved across updates
+
+### TestFlight updates
+
+1. TestFlight notifies you of new builds
+2. Open TestFlight and tap "Update" next to iSH
+3. Beta updates may occur several times per week
+
+<Tip>
+Your Alpine Linux environment, installed packages, and files persist across app updates. You don't need to reconfigure anything after updating iSH.
+</Tip>
+
+## Next steps
+
+Now that you have iSH installed and running:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Learn the essential commands and install your first packages
+  </Card>
+  
+  <Card title="Architecture" icon="sitemap" href="/architecture/overview">
+    Understand how iSH works under the hood
+  </Card>
+</CardGroup>
+
+## Getting help
+
+If you continue to experience issues:
+
+- Check the [iSH Wiki](https://github.com/ish-app/ish/wiki) for tutorials and guides
+- Join the [Discord server](https://discord.gg/HFAXj44) for community support
+- Report bugs on [GitHub Issues](https://github.com/ish-app/ish/issues)
+- Check iOS Settings → Privacy → Analytics for crash logs if the app is crashing

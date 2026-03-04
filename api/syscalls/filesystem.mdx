@@ -1,0 +1,585 @@
+---
+title: "Filesystem Operations"
+description: "System calls for file and directory operations"
+---
+
+## File Operations
+
+### sys_open / sys_openat
+
+Open a file or device.
+
+```c
+fd_t sys_open(addr_t path_addr, dword_t flags, mode_t_ mode)
+fd_t sys_openat(fd_t at, addr_t path_addr, dword_t flags, mode_t_ mode)
+```
+
+<ParamField path="at" type="fd_t">
+  (openat only) Directory file descriptor for relative paths, or AT_FDCWD for current directory.
+</ParamField>
+
+<ParamField path="path_addr" type="addr_t">
+  Address of null-terminated path string.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  File access mode and flags:
+  - `O_RDONLY` (0): Read-only
+  - `O_WRONLY` (1): Write-only
+  - `O_RDWR` (2): Read-write
+  - `O_CREAT` (0x40): Create if doesn't exist
+  - `O_EXCL` (0x80): Fail if exists (with O_CREAT)
+  - `O_TRUNC` (0x200): Truncate to 0 length
+  - `O_APPEND` (0x400): Append mode
+  - `O_NONBLOCK` (0x800): Non-blocking I/O
+  - `O_DIRECTORY` (0x10000): Fail if not directory
+  - `O_CLOEXEC` (0x80000): Close on exec
+</ParamField>
+
+<ParamField path="mode" type="mode_t_">
+  Permissions for newly created file (masked by umask). Only used with O_CREAT.
+</ParamField>
+
+<ResponseField name="return" type="fd_t">
+  Returns file descriptor number on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `ENOENT` (-2): File doesn't exist (and O_CREAT not set)
+- `EEXIST` (-17): File exists (with O_CREAT | O_EXCL)
+- `EACCES` (-13): Permission denied
+- `EISDIR` (-21): Path is directory (cannot open for writing)
+- `ENOTDIR` (-20): Component in path is not directory
+- `EMFILE` (-24): Too many open files
+- `ENAMETOOLONG` (-36): Path too long
+- `EFAULT` (-14): Bad address
+
+**Source:** kernel/calls.h:129-130, kernel/fs.c:67
+
+---
+
+### sys_close
+
+Close a file descriptor.
+
+```c
+dword_t sys_close(fd_t fd)
+```
+
+<ParamField path="fd" type="fd_t">
+  File descriptor to close.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid file descriptor
+
+**Description:**
+Closes the file descriptor and releases associated resources. Subsequent operations on this fd will fail with EBADF.
+
+**Source:** kernel/calls.h:105, 131
+
+---
+
+### sys_read
+
+Read from a file descriptor.
+
+```c
+dword_t sys_read(fd_t fd_no, addr_t buf_addr, dword_t size)
+```
+
+<ParamField path="fd_no" type="fd_t">
+  File descriptor to read from.
+</ParamField>
+
+<ParamField path="buf_addr" type="addr_t">
+  Address of buffer to store read data.
+</ParamField>
+
+<ParamField path="size" type="dword_t">
+  Maximum number of bytes to read.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns number of bytes read (may be less than size), 0 on EOF, or negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid file descriptor or not open for reading
+- `EFAULT` (-14): Invalid buffer address
+- `EINTR` (-4): Interrupted by signal
+- `EIO` (-5): I/O error
+- `EISDIR` (-21): fd refers to directory
+
+**Source:** kernel/calls.h:77
+
+---
+
+### sys_write
+
+Write to a file descriptor.
+
+```c
+dword_t sys_write(fd_t fd_no, addr_t buf_addr, dword_t size)
+```
+
+<ParamField path="fd_no" type="fd_t">
+  File descriptor to write to.
+</ParamField>
+
+<ParamField path="buf_addr" type="addr_t">
+  Address of buffer containing data to write.
+</ParamField>
+
+<ParamField path="size" type="dword_t">
+  Number of bytes to write.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns number of bytes written (may be less than size), or negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid file descriptor or not open for writing
+- `EFAULT` (-14): Invalid buffer address
+- `EFBIG` (-27): File too large
+- `ENOSPC` (-28): No space left on device
+- `EPIPE` (-32): Broken pipe
+
+**Source:** kernel/calls.h:79
+
+---
+
+### sys_lseek
+
+Reposition file offset.
+
+```c
+dword_t sys_lseek(fd_t f, dword_t off, dword_t whence)
+```
+
+<ParamField path="f" type="fd_t">
+  File descriptor.
+</ParamField>
+
+<ParamField path="off" type="dword_t">
+  Offset in bytes.
+</ParamField>
+
+<ParamField path="whence" type="dword_t">
+  Reference point:
+  - `SEEK_SET` (0): Offset from beginning of file
+  - `SEEK_CUR` (1): Offset from current position
+  - `SEEK_END` (2): Offset from end of file
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns new file offset on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EBADF` (-9): Invalid file descriptor
+- `EINVAL` (-22): Invalid whence
+- `ESPIPE` (-29): fd is pipe or socket
+
+**Source:** kernel/calls.h:85
+
+---
+
+### sys_readv / sys_writev
+
+Read/write data into/from multiple buffers.
+
+```c
+dword_t sys_readv(fd_t fd_no, addr_t iovec_addr, dword_t iovec_count)
+dword_t sys_writev(fd_t fd_no, addr_t iovec_addr, dword_t iovec_count)
+```
+
+<ParamField path="fd_no" type="fd_t">
+  File descriptor.
+</ParamField>
+
+<ParamField path="iovec_addr" type="addr_t">
+  Address of array of iovec structures.
+</ParamField>
+
+<ParamField path="iovec_count" type="dword_t">
+  Number of iovec structures.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns total bytes read/written, or negative errno on error.
+</ResponseField>
+
+**Description:**
+Scatter-gather I/O operations. Each iovec structure contains a buffer address and length.
+
+**Source:** kernel/calls.h:78, 80
+
+---
+
+### sys_pread / sys_pwrite
+
+Read/write at specified offset without changing file position.
+
+```c
+dword_t sys_pread(fd_t f, addr_t buf_addr, dword_t buf_size, off_t_ off)
+dword_t sys_pwrite(fd_t f, addr_t buf_addr, dword_t size, off_t_ off)
+```
+
+<ParamField path="f" type="fd_t">
+  File descriptor.
+</ParamField>
+
+<ParamField path="buf_addr" type="addr_t">
+  Buffer address.
+</ParamField>
+
+<ParamField path="buf_size" type="dword_t">
+  Number of bytes to read/write.
+</ParamField>
+
+<ParamField path="off" type="off_t_">
+  Offset in file.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns bytes read/written, or negative errno on error.
+</ResponseField>
+
+**Description:**
+Like read/write but doesn't update the file offset. Thread-safe for concurrent operations.
+
+**Source:** kernel/calls.h:87-88
+
+---
+
+## File Metadata
+
+### sys_stat / sys_fstat / sys_lstat
+
+Get file status.
+
+```c
+dword_t sys_stat64(addr_t path_addr, addr_t statbuf_addr)
+dword_t sys_lstat64(addr_t path_addr, addr_t statbuf_addr)
+dword_t sys_fstat64(fd_t fd_no, addr_t statbuf_addr)
+dword_t sys_fstatat64(fd_t at, addr_t path_addr, addr_t statbuf_addr, dword_t flags)
+```
+
+<ParamField path="path_addr" type="addr_t">
+  Address of null-terminated path string.
+</ParamField>
+
+<ParamField path="fd_no" type="fd_t">
+  (fstat) File descriptor.
+</ParamField>
+
+<ParamField path="at" type="fd_t">
+  (fstatat) Directory fd for relative paths.
+</ParamField>
+
+<ParamField path="statbuf_addr" type="addr_t">
+  Address to store stat structure.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  (fstatat) AT_SYMLINK_NOFOLLOW to not follow symlinks.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Description:**
+- `stat`: Get status of file at path
+- `lstat`: Like stat but doesn't follow symbolic links
+- `fstat`: Get status of open file descriptor
+- `fstatat`: stat with directory fd support
+
+**Error Codes:**
+- `ENOENT` (-2): File doesn't exist
+- `EACCES` (-13): Permission denied
+- `EBADF` (-9): Invalid file descriptor (fstat)
+- `EFAULT` (-14): Bad address
+
+**Source:** kernel/calls.h:150-153
+
+---
+
+## Directory Operations
+
+### sys_mkdir / sys_mkdirat
+
+Create a directory.
+
+```c
+dword_t sys_mkdir(addr_t path_addr, mode_t_ mode)
+dword_t sys_mkdirat(fd_t at_f, addr_t path_addr, mode_t_ mode)
+```
+
+<ParamField path="at_f" type="fd_t">
+  (mkdirat) Directory fd for relative paths.
+</ParamField>
+
+<ParamField path="path_addr" type="addr_t">
+  Address of null-terminated path string.
+</ParamField>
+
+<ParamField path="mode" type="mode_t_">
+  Directory permissions (masked by umask).
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EEXIST` (-17): Directory already exists
+- `ENOENT` (-2): Parent directory doesn't exist
+- `EACCES` (-13): Permission denied
+- `ENOSPC` (-28): No space on device
+
+**Source:** kernel/calls.h:170-171
+
+---
+
+### sys_rmdir
+
+Remove an empty directory.
+
+```c
+dword_t sys_rmdir(addr_t path_addr)
+```
+
+<ParamField path="path_addr" type="addr_t">
+  Address of null-terminated path string.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `ENOENT` (-2): Directory doesn't exist
+- `ENOTEMPTY` (-39): Directory not empty
+- `ENOTDIR` (-20): Path is not a directory
+- `EACCES` (-13): Permission denied
+- `EBUSY` (-16): Directory in use
+
+**Source:** kernel/calls.h:136
+
+---
+
+### sys_getdents / sys_getdents64
+
+Read directory entries.
+
+```c
+int_t sys_getdents(fd_t f, addr_t dirents, dword_t count)
+int_t sys_getdents64(fd_t f, addr_t dirents, dword_t count)
+```
+
+<ParamField path="f" type="fd_t">
+  File descriptor of open directory.
+</ParamField>
+
+<ParamField path="dirents" type="addr_t">
+  Buffer to store directory entries.
+</ParamField>
+
+<ParamField path="count" type="dword_t">
+  Size of buffer in bytes.
+</ParamField>
+
+<ResponseField name="return" type="int_t">
+  Returns bytes read on success, 0 at end of directory, or negative errno on error.
+</ResponseField>
+
+**Description:**
+Reads directory entries into a buffer. Each entry includes inode, offset, name, and type.
+
+**Source:** kernel/calls.h:148-149
+
+---
+
+## File System Operations
+
+### sys_mount
+
+Mount a filesystem.
+
+```c
+dword_t sys_mount(addr_t source_addr, addr_t target_addr, addr_t type_addr, 
+                  dword_t flags, addr_t data_addr)
+```
+
+<ParamField path="source_addr" type="addr_t">
+  Address of device or filesystem source path.
+</ParamField>
+
+<ParamField path="target_addr" type="addr_t">
+  Address of mount point path.
+</ParamField>
+
+<ParamField path="type_addr" type="addr_t">
+  Address of filesystem type string.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Mount flags:
+  - `MS_READONLY` (0x1): Mount read-only
+  - `MS_NOSUID` (0x2): Ignore suid/sgid bits
+  - `MS_NODEV` (0x4): Disallow device files
+  - `MS_NOEXEC` (0x8): Disallow program execution
+</ParamField>
+
+<ParamField path="data_addr" type="addr_t">
+  Filesystem-specific options.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Error Codes:**
+- `EPERM` (-1): Permission denied
+- `ENOENT` (-2): Mount point doesn't exist
+- `ENOTDIR` (-20): Target not a directory
+- `EBUSY` (-16): Target in use
+
+**Source:** kernel/calls.h:195
+
+---
+
+### sys_umount2
+
+Unmount a filesystem.
+
+```c
+dword_t sys_umount2(addr_t target_addr, dword_t flags)
+```
+
+<ParamField path="target_addr" type="addr_t">
+  Address of mount point path.
+</ParamField>
+
+<ParamField path="flags" type="dword_t">
+  Unmount flags (MNT_FORCE, MNT_DETACH, etc.).
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:196
+
+---
+
+## Link Operations
+
+### sys_link / sys_linkat
+
+Create a hard link.
+
+```c
+dword_t sys_link(addr_t src_addr, addr_t dst_addr)
+dword_t sys_linkat(fd_t src_at_f, addr_t src_addr, fd_t dst_at_f, addr_t dst_addr)
+```
+
+<ParamField path="src_addr" type="addr_t">
+  Existing file path.
+</ParamField>
+
+<ParamField path="dst_addr" type="addr_t">
+  New link path.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:132-133
+
+---
+
+### sys_unlink / sys_unlinkat
+
+Remove a file or link.
+
+```c
+dword_t sys_unlink(addr_t path_addr)
+dword_t sys_unlinkat(fd_t at_f, addr_t path_addr, int_t flags)
+```
+
+<ParamField path="path_addr" type="addr_t">
+  Path to file to remove.
+</ParamField>
+
+<ParamField path="flags" type="int_t">
+  (unlinkat) AT_REMOVEDIR to remove directory.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:134-135
+
+---
+
+### sys_symlink / sys_symlinkat
+
+Create a symbolic link.
+
+```c
+dword_t sys_symlink(addr_t target_addr, addr_t link_addr)
+dword_t sys_symlinkat(addr_t target_addr, fd_t at_f, addr_t link_addr)
+```
+
+<ParamField path="target_addr" type="addr_t">
+  Target path (can be relative or absolute).
+</ParamField>
+
+<ParamField path="link_addr" type="addr_t">
+  Symbolic link path to create.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns 0 on success, negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:140-141
+
+---
+
+### sys_readlink / sys_readlinkat
+
+Read symbolic link target.
+
+```c
+dword_t sys_readlink(addr_t path, addr_t buf, dword_t bufsize)
+dword_t sys_readlinkat(fd_t at_f, addr_t path, addr_t buf, dword_t bufsize)
+```
+
+<ParamField path="path" type="addr_t">
+  Symbolic link path.
+</ParamField>
+
+<ParamField path="buf" type="addr_t">
+  Buffer for target path.
+</ParamField>
+
+<ParamField path="bufsize" type="dword_t">
+  Buffer size.
+</ParamField>
+
+<ResponseField name="return" type="dword_t">
+  Returns number of bytes placed in buffer, or negative errno on error.
+</ResponseField>
+
+**Source:** kernel/calls.h:146-147
