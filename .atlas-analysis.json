@@ -1,0 +1,113 @@
+{
+  "projectType": "general",
+  "projectName": "iSH",
+  "projectDescription": "Linux shell for iOS using x86/x86_64 emulation and syscall translation",
+  "theme": "aspen",
+  "primaryColor": "#7c7c7c",
+  "lightColor": "#050505",
+  "darkColor": "#b3b3b3",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/emulation",
+              "architecture/syscalls",
+              "architecture/filesystem"
+            ]
+          },
+          {
+            "group": "Building",
+            "pages": [
+              "building/ios",
+              "building/cli",
+              "building/requirements"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/64bit-port",
+              "advanced/logging",
+              "advanced/debugging",
+              "advanced/interpreter"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Components",
+            "pages": [
+              "api/emulator",
+              "api/kernel",
+              "api/filesystem",
+              "api/memory"
+            ]
+          },
+          {
+            "group": "System Calls",
+            "pages": [
+              "api/syscalls/process",
+              "api/syscalls/memory",
+              "api/syscalls/filesystem",
+              "api/syscalls/network"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Community",
+        "groups": [
+          {
+            "group": "Resources",
+            "pages": [
+              "community/contributing",
+              "community/discord",
+              "community/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "x86/x86_64 CPU emulation on iOS using threaded code interpreter",
+    "Linux syscall translation to iOS equivalents",
+    "Alpine Linux filesystem support with fake filesystem database",
+    "Terminal emulator with full TTY/PTY support",
+    "File provider extension for iOS Files app integration",
+    "64-bit architecture port (work in progress)",
+    "Custom instruction decoder and JIT-like gadget execution"
+  ],
+  "publicApiSurface": [
+    "cpu_run_to_interrupt",
+    "sys_clone",
+    "sys_fork",
+    "sys_execve",
+    "sys_exit",
+    "sys_brk",
+    "sys_mmap",
+    "sys_open",
+    "sys_read",
+    "sys_write",
+    "do_mount",
+    "task_run_current",
+    "user_read",
+    "user_write"
+  ]
+}
